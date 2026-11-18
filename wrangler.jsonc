@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "teams-ops",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-11-18",
+  "workers_dev": false,
+  "preview_urls": false,
+  "keep_vars": true,
+  "routes": [
+    { "pattern": "ops.teams.com.kh", "custom_domain": true }
+  ],
+  "vars": {
+    "TEAMS_MODE": "team",
+    "TEAMS_APP_HOST": "ops.teams.com.kh"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "teams-ops-production",
+      "database_id": "REPLACE_WITH_PRODUCTION_D1_ID",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "teams-ops-production-files" }
+  ]
+}

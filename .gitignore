@@ -1,0 +1,8 @@
+dist/
+var/
+.env
+.env.*
+.dev.vars*
+.wrangler/
+wrangler.production.json
+node_modules/
