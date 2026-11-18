@@ -52,3 +52,11 @@ test('Receiving mail still requires its provider signature',async()=>{
   assert.equal(response.status,401);
   assert.equal((await protectedWorker.fetch(new Request(path,{headers}),env,{})).status,401);
 });
+
+test('Old sign-out links hand off only to the Cloudflare Access logout on this host',async()=>{
+  const protectedWorker=cloudflareProductionWorker({fetch:()=>assert.fail('Sign-out is handled by the Access gateway')});
+  const response=await protectedWorker.fetch(new Request('https://'+host+'/signout-with-chatgpt?return_to=https%3A%2F%2Fother.example'),devEnv,{});
+  assert.equal(response.status,302);
+  assert.equal(response.headers.get('Location'),'/cdn-cgi/access/logout');
+  assert.equal(response.headers.get('Cache-Control'),'no-store');
+});

@@ -1706,7 +1706,7 @@ function profile(){
     return;
   }
   if(!state.data?.demoRoles.length){
-    openModal('Account','',details([['Email',current?.email],['Role',current?.roles.map(roleLabel).join(', ')]]),'<a class="btn" href="/signout-with-chatgpt?return_to=%2F" target="_top">Sign out</a>');
+    openModal('Account','',details([['Email',current?.email],['Role',current?.roles.map(roleLabel).join(', ')]]),'<a class="btn" href="/cdn-cgi/access/logout" target="_top">Sign out</a>');
     return;
   }
   const cards=state.data.demoRoles.flatMap(role=>{

@@ -11,6 +11,9 @@ export function cloudflareProductionWorker(worker) {
       if (env.TEAMS_MODE !== 'team' || !audience || !env.TEAMS_OWNER_EMAIL?.trim() || !env.DB || !env.BUCKET) {
         return json({error:'The production workspace is being configured.'}, 503);
       }
+      if (url.pathname === '/signout-with-chatgpt' && request.method === 'GET') {
+        return new Response(null, {status:302, headers:{Location:'/cdn-cgi/access/logout','Cache-Control':'no-store'}});
+      }
       const headers = new Headers(request.headers);
       headers.delete('oai-authenticated-user-id');
       headers.delete('oai-authenticated-user-email');
