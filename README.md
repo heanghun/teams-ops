@@ -70,7 +70,11 @@ Deploy a dedicated employee environment with fresh D1 and private R2 bindings. C
 - `TEAMS_ACCESS_AUD` equal to the configured Access application's audience
 - `TEAMS_OWNER_EMAIL` equal to the intended administrator's verified Access email
 
-The database rejects switching from fictional mode to team mode after initialization. Keep the owner email and ordinary employees' memberships in their authorized environment only. Sign in as the configured owner and add allowed employees under Settings. Use distinct proposer and approver accounts to test authority. Run UAT with each operating department before switching any real transactions to the application.
+The database rejects switching from fictional mode to team mode after initialization. Keep the owner email and ordinary employees' memberships in their authorized environment only. Sign in as the configured owner and add approved accounts in User management. Use distinct proposer and approver accounts to test authority. Run UAT with each operating department before switching any real transactions to the application.
+
+The production Platform Administrator opens the admin dashboard, User management, Admin settings and Activity logs. Use **User management > Set up Managing Director** once, signed in as the configured platform owner. Enter the authorized MD's own verified Cloudflare sign-in email and an appointment reference. The action records the setup in the audit trail. Subsequent MD and Finance role changes belong to a signed-in MD. The MD also manages company settings, warehouse setup, business imports and stock adjustment approval.
+
+Admin settings controls Resend sender/routing, whether sending and receiving are enabled, OpenAI review and usage limits, and the default upload quota. Set an individual override in User management. Quotas measure stored documents and frozen outbound email attachment copies. Existing files remain available when an account reaches its quota. Configure provider credentials in Cloudflare Worker Secrets. Apply `drizzle/0002_platform_activity.sql` for seven-day diagnostics of failed and slow requests. The activity view also shows recent audit actions with timestamps and actors.
 
 ## Backup and recovery
 

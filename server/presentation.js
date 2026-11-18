@@ -26,6 +26,8 @@ function ownedJob(row, actor) {
 }
 export function visible(row,actor,rows){
   if(!row)return false;
+  if(actor.platformAdmin)return row.kind==='employee';
+  if(row.kind==='platformSettings')return false;
   if(!hasFinanceAccess(actor)&&financialRecord(row,rows))return false;
   if(row.kind==='mail')return mailboxAccess(actor).includes(row.mailbox);
   if(row.kind==='personnel')return actor.personnelAdmin===true;

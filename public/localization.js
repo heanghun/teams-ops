@@ -1,5 +1,51 @@
 // Translate interface copy only. Operational values, identifiers, inputs and exports stay unchanged.
 const entries = `
+Administration|រដ្ឋបាលប្រព័ន្ធ
+Admin dashboard|ផ្ទាំងគ្រប់គ្រងប្រព័ន្ធ
+User management|ការគ្រប់គ្រងអ្នកប្រើប្រាស់
+Admin settings|ការកំណត់ប្រព័ន្ធ
+Activity logs|កំណត់ហេតុសកម្មភាព
+Manage TEAMS accounts, integrations and service activity.|គ្រប់គ្រងគណនី TEAMS ការតភ្ជាប់ និងសកម្មភាពសេវាកម្ម។
+Set up Managing Director|កំណត់គណនីអគ្គនាយក
+Authorization reference|ឯកសារយោងការអនុញ្ញាត
+Active users|អ្នកប្រើប្រាស់សកម្ម
+Storage used|ទំហំផ្ទុកដែលបានប្រើ
+Request failures (24 hours)|សំណើបរាជ័យក្នុង ២៤ ម៉ោង
+Slow requests (24 hours)|សំណើយឺតក្នុង ២៤ ម៉ោង
+Service status|ស្ថានភាពសេវាកម្ម
+Application database|មូលដ្ឋានទិន្នន័យកម្មវិធី
+Document storage|កន្លែងផ្ទុកឯកសារ
+Email sending|ការផ្ញើអ៊ីមែល
+Email receiving|ការទទួលអ៊ីមែល
+User accounts|គណនីអ្នកប្រើប្រាស់
+Import accounts|នាំចូលគណនី
+Deployment owner|ម្ចាស់ប្រព័ន្ធ
+Configure platform connections and upload limits.|កំណត់ការតភ្ជាប់ប្រព័ន្ធ និងដែនកំណត់ការផ្ទុកឯកសារ។
+Email (Resend)|អ៊ីមែល (Resend)
+Configure email|កំណត់ការតភ្ជាប់អ៊ីមែល
+Enable outbound email|បើកការផ្ញើអ៊ីមែល
+Enable inbound email|បើកការទទួលអ៊ីមែល
+Sender display name|ឈ្មោះបង្ហាញរបស់អ្នកផ្ញើ
+Verified sender email|អ៊ីមែលអ្នកផ្ញើដែលបានផ្ទៀងផ្ទាត់
+Document storage (R2)|កន្លែងផ្ទុកឯកសារ (R2)
+Default per-user limit|ដែនកំណត់លំនាំដើមសម្រាប់អ្នកប្រើម្នាក់
+Account storage used|ទំហំផ្ទុកដែលគណនីបានប្រើ
+Set storage limit|កំណត់ដែនកំណត់ទំហំផ្ទុក
+Set default storage limit|កំណត់ដែនកំណត់ទំហំផ្ទុកលំនាំដើម
+Storage limit (MB)|ដែនកំណត់ទំហំផ្ទុក (MB)
+Unlimited|គ្មានដែនកំណត់
+AI review (OpenAI)|ការពិនិត្យដោយ AI (OpenAI)
+Configure AI review|កំណត់ការពិនិត្យដោយ AI
+Enable AI review|បើកការពិនិត្យដោយ AI
+OpenAI model|ម៉ូដែល OpenAI
+Team daily limit|ដែនកំណត់ប្រចាំថ្ងៃសម្រាប់ក្រុម
+User daily limit|ដែនកំណត់ប្រចាំថ្ងៃសម្រាប់អ្នកប្រើ
+Request diagnostics|ការត្រួតពិនិត្យសំណើ
+Audit activity|សកម្មភាពសវនកម្ម
+Last seen (UTC)|បានកត់ត្រាចុងក្រោយ (UTC)
+HTTP status|ស្ថានភាព HTTP
+Longest (ms)|រយៈពេលយូរបំផុត (ms)
+Diagnostic storage is unavailable.|កន្លែងផ្ទុកទិន្នន័យត្រួតពិនិត្យមិនអាចប្រើបាន។
 Review tender with AI|ពិនិត្យឯកសារដេញថ្លៃដោយ AI
 Extract BOQ with AI|ស្រង់បញ្ជីបរិមាណដោយ AI
 Review quotation with AI|ពិនិត្យសម្រង់តម្លៃដោយ AI

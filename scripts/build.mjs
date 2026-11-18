@@ -11,9 +11,9 @@ const images = { 'teams-wordmark.webp':'image/webp', 'teams-field.webp':'image/w
 for (const [file,type] of Object.entries(images)) {
   assets['/assets/' + file] = { type, base64:(await readFile('public/assets/' + file)).toString('base64') };
 }
-const modules = ['invoice-fontkit','invoice-fonts','invoice-document','finance','seed', 'domain', 'mail-model', 'tender-estimating', 'xlsx-template', 'documents', 'letterhead-brand', 'letterhead', 'presentation', 'email', 'mail-service', 'roster', 'ai-review', 'worker', 'cloudflare-access'];
+const modules = ['invoice-fontkit','invoice-fonts','invoice-document','finance','seed', 'domain', 'mail-model', 'tender-estimating', 'xlsx-template', 'documents', 'letterhead-brand', 'letterhead', 'presentation', 'email', 'mail-service', 'roster', 'ai-review', 'platform', 'worker', 'cloudflare-access'];
 const source = await Promise.all(modules.map(name => readFile('server/' + name + '.js', 'utf8')));
-modules.forEach((name, index) => { if(!['email','mail-service','roster','ai-review','worker','cloudflare-access'].includes(name))assets['/server/' + name + '.js'] = source[index]; });
+modules.forEach((name, index) => { if(!['email','mail-service','roster','ai-review','platform','worker','cloudflare-access'].includes(name))assets['/server/' + name + '.js'] = source[index]; });
 const {outputFiles}=await build({
   entryPoints:['public/app.js'],bundle:true,format:'esm',platform:'browser',
   target:'es2022',minify:true,write:false,external:['./demo.js','/vendor/pdf.min.mjs'],

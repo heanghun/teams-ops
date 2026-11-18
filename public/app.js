@@ -26,7 +26,11 @@ const nav=[
   ['Procurement & Logistics',[['procurement','Procurement','cart'],['inventory','Inventory','box']]],
   ['Finance & Support',[['hr','HR & Employees','people'],['billing','Billing & Collections','wallet'],['reports','Reports','chart'],['mail','Email','mail'],['documents','Documents','folder'],['settings','Settings','settings']]],
 ];
-const navMap=Object.fromEntries(nav.flatMap(([,entries])=>entries.map(([k,t,i])=>[k,{t,i}])));
+const platformNav=[['Administration',[
+  ['home','Admin dashboard','grid'],['platform-users','User management','people'],
+  ['platform-settings','Admin settings','settings'],['platform-activity','Activity logs','clipboard'],
+]]];
+const navMap=Object.fromEntries([...platformNav,...nav].flatMap(([,entries])=>entries.map(([k,t,i])=>[k,{t,i}])));
 navMap.employees={t:'Settings / Employees',i:'people'};
 navMap.roles={t:'Settings / Roles',i:'settings'};
 const roleLabels={admin:'Platform Administrator',director:'Managing Director',manager:'Business Manager',mep:'Head of MEP',estimator:'Engineering & Estimation',project:'Project Manager',procurement:'Procurement',warehouse:'Stock Controller',maintenance:'Maintenance Supervisor',technician:'Maintenance Technician',finance:'Accounting & Finance Manager',adminSupport:'HR & Administration',auditor:'Read-Only Auditor',installation_lead:'Installation Lead',installation_technician:'Installation Technician',maintenance_lead:'Maintenance Team Leader',logistics:'Logistics'};
@@ -35,11 +39,14 @@ const kindView={mail:'mail',client:'clients',project:'projects',tender:'tenders'
 const kindLabels={mail:'Email',requisition:'Purchase requisition',client:'Client',project:'Project',tender:'Tender',quote:'Quotation',supplier:'Supplier',request:'Requisition',po:'Purchase order',material:'Material',movement:'Stock movement',count:'Stock count',contract:'Service contract',agreement:'Service agreement',dispatch:'Client email',job:'Service visit',claim:'Progress claim',invoice:'Invoice',document:'Attachment',variation:'Variation',milestone:'Billing milestone',payment:'Payment',requirement:'Material requirement',offer:'Supplier offer',employee:'Employee',progress:'Progress update',warehouse:'Warehouse',personnel:'Employee',task:'Project task'};
 const state={mailFolder:'inbox',mailbox:'',mailSelected:'',mailQuery:'',clientFilter:'all',view:'home',queue:'All items',data:null,role:storage.get('teams-demo-role')||'admin',picId:storage.get('teams-demo-pic')||'',planRole:'mep',mobile:false,error:null,previewId:'',service:'contracting',stage:0,unit:'engineering',employeeFilters:{search:'',department:'',role:'',review:''}};
 const permissions=()=>state.data?.permissions??['*'];
+const isPlatform=()=>state.data?.actor.platformAdmin===true;
 const isPrivate=()=>state.data?.privateWorkspace===true;
 const namedAssignments=()=>state.data?.namedAssignments===true;
 const demoEmployee=()=>state.data?.actor.previewEmployeeId||
   (state.data?.people?.some(person=>person.id==='demo-person:'+state.role)?'demo-person:'+state.role:'');
 const show=key=>{
+  if(!state.data)return key==='home';
+  if(isPlatform())return permissions().includes(key);
   if(['billing','reports'].includes(key)&&!hasFinanceAccess(state.data?.actor))return false;
   if(key==='hr')return state.data?.publicDemo===true&&hasRole('admin','adminSupport');
   if(key==='materials')return hasRole('admin','estimator','mep','manager','director','project','procurement','auditor');
@@ -151,7 +158,7 @@ function sidebar(){
   $('#sidebar').classList.toggle('open',state.mobile);
   $('#nav-scrim').hidden=!state.mobile;
   $$('[data-cmd=mobile]').forEach(control=>{control.setAttribute('aria-expanded',String(state.mobile));control.setAttribute('aria-controls','sidebar');});
-  $('#sidebar').innerHTML='<div class="brand"><button type="button" class="brand-home" data-view="home" aria-label="TEAMS Operations home"><img src="/assets/teams-wordmark.webp" alt="TEAMS" width="150" height="40"><span>ENGINEERING OPERATIONS</span></button></div><nav class="nav">'+nav.map(([group,entries])=>{
+  $('#sidebar').innerHTML='<div class="brand"><button type="button" class="brand-home" data-view="home" aria-label="TEAMS Operations home"><img src="/assets/teams-wordmark.webp" alt="TEAMS" width="150" height="40"><span>ENGINEERING OPERATIONS</span></button></div><nav class="nav">'+(isPlatform()?platformNav:nav).map(([group,entries])=>{
     const available=entries.filter(([key])=>show(key));
     return available.length?'<div class="nav-group">'+e(group.toUpperCase())+'</div>'+available.map(([key,title,i])=>'<button type="button" data-view="'+key+'" '+((state.view===key||(key==='settings'&&['employees','roles'].includes(state.view)))?'class="current" aria-current="page"':'')+'>'+icon(i,17)+e(title)+'</button>').join(''):'';
   }).join('')+'</nav><div class="sidebar-foot">'+icon('layers',16)+'<span>TEAMS Operations <strong>V1</strong></span></div>';
@@ -160,7 +167,10 @@ function topbar(){
   const actor=state.data?.actor;
   const pic=activePic();
   const initials=state.data?.demoRoles.length?'TE':(actor?.name||actor?.email||'TE').slice(0,2).toUpperCase();
-  $('#topbar').innerHTML='<button type="button" class="icon-btn mobile-menu" data-cmd="mobile" aria-label="Toggle navigation">'+icon('menu',19)+'</button><div class="crumb"><span>Workspace</span>'+icon('right',13)+'<b>'+e(navMap[state.view]?.t||'Home')+'</b></div><div class="top-right">'+languageControl()+'<button type="button" class="icon-btn install-shortcut" data-cmd="pwa.install" aria-label="Install app">'+icon('download',18)+'</button><label class="search">'+icon('search',17)+'<input id="search" type="search" placeholder="Search records..." aria-label="Search records" autocomplete="off"><div id="search-results" class="search-results" hidden></div></label><button type="button" class="icon-btn notify" data-cmd="alerts" aria-label="View exceptions">'+icon('bell',17)+'</button><button type="button" class="profile" data-cmd="profile" aria-label="Account and role"><span class="avatar">'+e(initials)+'</span><span><span class="name">'+e(pic?.name||(state.data?.demoRoles.length?'TEAMS Demo':actor?.name||'Account'))+'</span><small>'+e(actor?roleLabel(actor.roles[0]):'')+'</small></span>'+icon('down',14)+'</button></div>';
+  const title=isPlatform()&&state.view==='home'?'Admin dashboard':navMap[state.view]?.t||'Home';
+  const search='<label class="search">'+icon('search',17)+'<input id="search" type="search" placeholder="Search records..." aria-label="Search records" autocomplete="off"><div id="search-results" class="search-results" hidden></div></label>';
+  const exceptions='<button type="button" class="icon-btn notify" data-cmd="alerts" aria-label="View exceptions">'+icon('bell',17)+'</button>';
+  $('#topbar').innerHTML='<button type="button" class="icon-btn mobile-menu" data-cmd="mobile" aria-label="Toggle navigation">'+icon('menu',19)+'</button><div class="crumb"><span>'+e(isPlatform()?'Administration':'Workspace')+'</span>'+icon('right',13)+'<b>'+e(title)+'</b></div><div class="top-right">'+languageControl()+'<button type="button" class="icon-btn install-shortcut" data-cmd="pwa.install" aria-label="Install app">'+icon('download',18)+'</button>'+(isPlatform()?'':search+exceptions)+'<button type="button" class="profile" data-cmd="profile" aria-label="Account and role"><span class="avatar">'+e(initials)+'</span><span><span class="name">'+e(pic?.name||(state.data?.demoRoles.length?'TEAMS Demo':actor?.name||'Account'))+'</span><small>'+e(actor?roleLabel(actor.roles[0]):'')+'</small></span>'+icon('down',14)+'</button></div>';
 }
 function demoBar(){
   if(isPrivate())return '<div class="demo-bar"><span class="dot"></span><strong>'+(state.previewId?'Employee preview':'Private demo')+'</strong><span class="text">'+(state.previewId?'Operational actions use the selected employee’s permissions.':'Authorized access to named employees and operational assignments.')+'</span>'+(state.previewId?'<button data-cmd="preview.exit" type="button">Return to administrator</button>':'')+'</div>';
@@ -366,6 +376,63 @@ function settingsPage(){
     block('Data imports',table(['Source file','Type','Rows','Cutoff'],sorted(rows('importLog')),r=>[recordCell(r),e(r.type),e(r.count),e(r.cutoff||'—')]),button('Import records','master.import',{small:true,icon:'upload'}))+
     block('Audit history','<p class="empty">Review timestamped changes and approval actions.</p>',button('Open audit log','audit',{small:true})+(hasFinanceAccess(state.data.actor)?button('Export data snapshot','backup',{small:true,icon:'download'}):'')));
 }
+const storageAmount=bytes=>qty(Number((bytes/1_000_000).toFixed(3)))+' MB';
+const storageCap=limit=>limit==null?'Unlimited':qty(limit)+' MB';
+const accountCanEdit=record=>!record?.bootstrapOwner&&(!record?.roles?.includes('admin')||state.data.actor.bootstrapOwner)&&
+  (!(record?.protectedAccess||record?.roles?.some(role=>['director','finance'].includes(role)))||hasRole('director'));
+const directorSetupButton=()=>state.data.platform.directorSetupAvailable?
+  button('Set up Managing Director','platform.director.initialize',{primary:true,icon:'people'}):'';
+
+function platformDashboard(){
+  const p=state.data.platform, users=rows('employee');
+  const indicators=[
+    ['Active users',qty(users.filter(user=>user.active).length),'people','platform-users'],
+    ['Storage used',storageAmount(p.storageUsedBytes),'box','platform-settings'],
+    ['Request failures (24 hours)',p.activity.counts.failures??'Unavailable','alert','platform-activity'],
+    ['Slow requests (24 hours)',p.activity.counts.slow??'Unavailable','clock','platform-activity'],
+  ];
+  return page('Admin dashboard','Manage TEAMS accounts, integrations and service activity.',directorSetupButton(),
+    '<section class="kpis" aria-label="Platform indicators">'+indicators.map(([label,value,i,view])=>
+      '<button class="kpi" type="button" data-view="'+A(view)+'"><span class="kpi-head">'+e(label)+'<span class="kpi-icon">'+icon(i,17)+'</span></span><strong>'+e(value)+'</strong></button>').join('')+'</section>'+
+    block('Service status','<div class="modal-body">'+details([['Application database','Connected'],['Document storage',p.storageBound?'Connected':'Unavailable'],
+      ['Email sending',p.emailConnection.mode==='configured'?'Configured':'Unavailable'],['Email receiving',p.emailConnection.receiving==='configured'?'Configured':'Unavailable'],
+      ['AI review',p.ai.enabled?(p.aiKeySet&&p.ai.model?'Configured':'Credentials required'):'Disabled']])+'</div>'));
+}
+function platformUsers(){
+  const users=sorted(rows('employee'),'name',false),p=state.data.platform;
+  return page('User management','Assign access using each user\'s verified Cloudflare sign-in email.',
+    directorSetupButton()+button('Assign employee access','employee.upsert',{primary:true,icon:'plus'})+button('Import accounts','master.import',{icon:'upload'}),
+    block('User accounts',table(['Employee','Sign-in email','Roles','Access','Storage used','Limit','Actions'],users,user=>[
+      recordCell(user),e(user.email),e(user.roles.map(roleLabel).join(', ')),status(user.active?'Active':'Closed'),
+      e(storageAmount(user.storageUsedBytes)),e(storageCap(user.storageLimitMb??p.defaultStorageMb)),
+      user.bootstrapOwner?e('Deployment owner'):(accountCanEdit(user)?actionButton('employee.upsert','Edit access',user.id):'')+
+      actionButton('platform.storage.user','Set storage limit',user.id),
+    ])));
+}
+function platformSettings(){
+  const p=state.data.platform;
+  return page('Admin settings','Configure platform connections and upload limits.','',
+    block('Email (Resend)','<div class="modal-body">'+details([['Sending',p.email.outbound?'Enabled':'Disabled'],['Receiving',p.email.inbound?'Enabled':'Disabled'],
+      ['Sender',p.email.fromEmail||'Unconfigured'],['API credentials',p.mailKeySet?'Configured':'Required'],['Webhook signing secret',p.webhookKeySet?'Configured':'Required'],
+      ...Object.entries(mailboxes).map(([key,label])=>[label,(p.email.routing[key]??[]).join(', ')])])+
+      '<p class="muted">Provider keys and webhook secrets are stored in Cloudflare Worker Secrets.</p></div>',button('Configure email','platform.email.update',{small:true}))+
+    block('Document storage (R2)','<div class="modal-body">'+details([['Storage binding',p.storageBound?'Connected':'Unavailable'],
+      ['Default per-user limit',storageCap(p.defaultStorageMb)],['Account storage used',storageAmount(p.storageUsedBytes)]])+
+      '<p class="muted">Limits cover uploaded documents and stored outbound email attachment copies.</p></div>',button('Set default storage limit','platform.storage.default',{small:true}))+
+    block('AI review (OpenAI)','<div class="modal-body">'+details([['AI review',p.ai.enabled?'Enabled':'Disabled'],['Model',p.ai.model||'Unconfigured'],
+      ['API credentials',p.aiKeySet?'Configured':'Required'],['Team daily limit',p.ai.dailyLimit],['User daily limit',p.ai.userDailyLimit]])+'</div>',button('Configure AI review','platform.ai.update',{small:true})));
+}
+function platformActivityPage(){
+  const {available,issues,audit}=state.data.platform.activity;
+  const actorLabel=value=>e(value.replace(/^cloudflare-access:/,''));
+  const utcTime=value=>e(value.replace('T',' ').slice(0,19));
+  return page('Activity logs','Review recent activity, request failures and slow requests.',button('Refresh','retry'),
+    block('Request diagnostics',available?table(['Last seen (UTC)','User','Area','HTTP status','Requests','Longest (ms)'],issues,
+      x=>[utcTime(x.last_seen),actorLabel(x.actor),e(x.area),e(x.status),e(x.hits),e(x.max_ms)],'No request issues recorded in the past seven days.'):
+      '<p class="empty">Diagnostic storage is unavailable.</p>')+
+    block('Audit activity',table(['When (UTC)','User','Action','Authorization reference'],audit,
+      x=>[utcTime(x.created_at),actorLabel(x.actor),e(x.action),e(x.authorization_reference||'')])));
+}
 function settingsTabs(){
   if(!show('employees'))return '';
   return '<nav class="settings-tabs" aria-label="Settings sections">'+[['settings','General'],['employees','Employees'],['roles','Roles']].map(([key,label])=>
@@ -560,8 +627,10 @@ function hrEmployeeForm(id){
     textarea('reason','Reason for employee change',''),
   ],submit:'Save employee',onSubmit:values=>savePlanning('employee.save',{...values,id},values.reason,key)});
 }
-const pages={mail:mailPage,home:dashboard,structure:structurePage,clients:clientsPage,tenders:tendersPage,materials:materialsPage,hr:hrPage,quotes:quotesPage,procurement:procurementPage,inventory:inventoryPage,projects:projectsPage,maintenance:maintenancePage,billing:billingPage,reports:reportsPage,documents:documentsPage,settings:settingsPage,employees:employeesPage,roles:rolesPage};
+const pages={mail:mailPage,home:()=>isPlatform()?platformDashboard():dashboard(),structure:structurePage,clients:clientsPage,tenders:tendersPage,materials:materialsPage,hr:hrPage,quotes:quotesPage,procurement:procurementPage,inventory:inventoryPage,projects:projectsPage,maintenance:maintenancePage,billing:billingPage,reports:reportsPage,documents:documentsPage,settings:settingsPage,employees:employeesPage,roles:rolesPage,
+  'platform-users':platformUsers,'platform-settings':platformSettings,'platform-activity':platformActivityPage};
 function render(){
+  if(isPlatform()&&state.view==='settings')state.view='platform-settings';
   if(state.data&&!show(state.view))state.view='home';
   sidebar();topbar();mobileNavigation();
   $('#main').innerHTML=state.error?'<section class="card"><div class="empty"><h2>Workspace unavailable</h2><p>'+e(state.error)+'</p><div class="actions" style="margin-top:12px">'+button('Retry','retry')+'</div></div></section>':state.data?pages[state.view]():'<div class="loading">Loading TEAMS Operations...</div>';
@@ -569,7 +638,8 @@ function render(){
 
 function mobileNavigation(){
   const preferred=hasRole('warehouse','logistics')?'inventory':hasRole('maintenance','maintenance_lead','technician')?'maintenance':show('projects')?'projects':show('quotes')?'quotes':'clients';
-  const items=[['home','Home','grid'],[preferred,'Work','clipboard'],[show('inventory')?'inventory':show('documents')?'documents':'roles',show('inventory')?'Stock':'Documents','box'],[show('mail')?'mail':show('procurement')?'procurement':'clients',show('mail')?'Email':show('procurement')?'Procurement':'Clients','mail']];
+  const items=isPlatform()?[['home','Admin','grid'],['platform-users','Users','people'],['platform-settings','Settings','settings'],['platform-activity','Logs','clipboard']]:
+    [['home','Home','grid'],[preferred,'Work','clipboard'],[show('inventory')?'inventory':show('documents')?'documents':'roles',show('inventory')?'Stock':'Documents','box'],[show('mail')?'mail':show('procurement')?'procurement':'clients',show('mail')?'Email':show('procurement')?'Procurement':'Clients','mail']];
   $('#mobile-nav').innerHTML=items.filter(([view],i,all)=>show(view)&&all.findIndex(x=>x[0]===view)===i).map(([view,label,i])=>'<button type="button" data-view="'+view+'"'+(state.view===view?' aria-current="page"':'')+'>'+icon(i,21)+'<span>'+e(label)+'</span></button>').join('')+'<button type="button" data-cmd="mobile" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">'+icon('menu',21)+'<span>More</span></button>';
   document.documentElement.dataset.view=state.view;
 }
@@ -788,7 +858,8 @@ function openRecord(id){
       body=add(['Location',r.location],['Warehouse',r.name],['Code',r.code]);break;
     case 'employee':
       body=add(['Employee',r.name],['Email',r.email],['Roles',r.roles.map(roleLabel).join(', ')],['Active',r.active?'Yes':'No']);
-      actions=actionButton('employee.upsert','Edit access',r.id);break;
+      actions=(accountCanEdit(r)?actionButton('employee.upsert','Edit access',r.id):'')+
+        (isPlatform()&&!r.bootstrapOwner?actionButton('platform.storage.user','Set storage limit',r.id):'');break;
     default:body=add(['Date',formatDate(r.date,true)],['Status',r.status]);
   }
   openModal(rawName(r),[rawCode(r),kindLabels[r.kind]].filter(Boolean).join(' · '),body+historyPanel(r)+appendDocs(r),actions||button('Close','close',{small:true}),wide);
@@ -1397,10 +1468,36 @@ function formOperation(cmd,id,arg,extra){
         number('agingDays','Inventory aging threshold (days)',s.agingDays,{min:1,step:1}),number('renewalDays','Renewal alert lead time (days)',s.renewalDays,{min:1,step:1}),
         number('fxRate','KHR per USD, for reference',s.fxRate??'',optional),date('fxDate','Exchange rate effective date',s.fxDate||today(),optional)],{open:false});
     }
-    case 'employee.upsert':
-      return config('Employee access',[text('name','Employee name',r?.name),text('email','Sign-in email',r?.email,{type:'email'}),
-        select('roles','Assigned roles',Object.entries(roleLabels),r?.roles??[],{multiple:true,help:'Hold Control or Command to select multiple roles.'}),
-        input('active','Active access',r?.active??true,{type:'checkbox',required:false})],{open:false});
+    case 'employee.upsert':{
+      if(!accountCanEdit(r))return;
+      const choices=Object.entries(roleLabels).filter(([role])=>role==='admin'?state.data.actor.bootstrapOwner:!['director','finance'].includes(role)||hasRole('director'));
+      return config('Employee access',[text('name','Employee name',r?.name),...(r?[]:[text('email','Sign-in email','',{type:'email'})]),
+        select('roles','Assigned roles',choices,r?.roles??[],{multiple:true,help:'Hold Control or Command to select multiple roles.'}),
+        input('active','Active access',r?.active??true,{type:'checkbox',required:false})],{open:false,sub:r?.email,values:r?{email:r.email}:undefined});
+    }
+    case 'platform.director.initialize':
+      return config('Set up Managing Director',[text('name','Employee name'),text('email','Sign-in email','',{type:'email'}),
+        textarea('reference','Authorization reference')],{open:false,submit:'Set up Managing Director',notes:'Use the approved Managing Director account and record the decision authorizing this one-time setup.'});
+    case 'platform.storage.default':case 'platform.storage.user':{
+      const individual=cmd==='platform.storage.user';
+      return config(individual?'Set storage limit':'Set default storage limit',[
+        number('limitMb','Storage limit (MB)',individual?r?.storageLimitMb??'':state.data.platform.defaultStorageMb??'',
+          {required:false,min:0,step:1,help:individual?'Leave blank to use the platform default. Zero blocks new uploads.':'Leave blank for unlimited storage. Zero blocks new uploads.'}),
+      ],{open:false,sub:r?.name});
+    }
+    case 'platform.email.update':{
+      const {email}=state.data.platform;
+      return config('Configure email',[input('outbound','Enable outbound email',email.outbound,{type:'checkbox'}),
+        input('inbound','Enable inbound email',email.inbound,{type:'checkbox'}),text('fromName','Sender display name',email.fromName,optional),
+        text('fromEmail','Verified sender email',email.fromEmail,{...optional,type:'email'}),
+        ...Object.entries(mailboxes).map(([key,label])=>textarea(key,label,(email.routing[key]??[]).join('\n'),{...optional,help:'Enter one receiving address per line.'})),
+      ],{wide:true,open:false});
+    }
+    case 'platform.ai.update':{
+      const {ai}=state.data.platform;
+      return config('Configure AI review',[input('enabled','Enable AI review',ai.enabled,{type:'checkbox'}),text('model','OpenAI model',ai.model,optional),
+        number('dailyLimit','Team daily limit',ai.dailyLimit,{min:1,step:1}),number('userDailyLimit','User daily limit',ai.userDailyLimit,{min:1,step:1})],{open:false});
+    }
     case 'tender.transition':case 'quote.transition':case 'project.status':case 'request.transition':case 'claim.transition':case 'variation.transition': {
       const title=stageLabel[arg]||arg;
       let label='Decision or document reference';
@@ -1438,7 +1535,7 @@ function masterImportForm(){
   let sheets=[],entries=[];
   const label={client:'Clients',supplier:'Suppliers',material:'Materials',project:'Projects',contract:'Maintenance contracts',employee:'Employee access',opening:'Opening stock'};
   editOperation('master.import',{title:'Import records',sub:'Map columns, preview the rows, and confirm the batch.',wide:true,
-    fields:[select('type','Record type',Object.entries(label).filter(([k])=>k!=='employee'||(!state.data.demoRoles.length&&!isPrivate())),'client'),
+    fields:[select('type','Record type',Object.entries(label).filter(([k])=>isPlatform()?k==='employee':k!=='employee'||(!state.data.demoRoles.length&&!isPrivate())),isPlatform()?'employee':'client'),
       input('file','Spreadsheet','',{type:'file',accept:'.csv,.tsv,.xlsx'}),date('cutoff','Verified opening stock cutoff',today(),optional)],
     content:'<div id="master-import" style="margin-top:12px"></div>',submit:'Confirm import',notes:'Use YYYY-MM-DD dates and plain numeric values. Import up to 100 rows per batch.',
     transform:values=>{
@@ -1676,7 +1773,10 @@ document.addEventListener('click',event=>{
     default:formOperation(cmd,id,arg,extra);
   }
 });
-window.addEventListener('hashchange',()=>{const v=location.hash.slice(1);if(navMap[v]&&show(v)){state.view=v;render();}});
+window.addEventListener('hashchange',()=>{
+  const view=location.hash.slice(1),v=isPlatform()&&view==='settings'?'platform-settings':view;
+  if(navMap[v]&&show(v)){state.view=v;render();}
+});
 const initialView=location.hash.slice(1);
 if(navMap[initialView])state.view=initialView;
 render();

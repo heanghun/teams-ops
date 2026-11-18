@@ -117,7 +117,7 @@ No employee login emails, passwords, missing IDs, organizational appointments, r
 ## Ordered deployment sequence
 
 1. Assign operational owners and verify the configured Access application for `ops.teams.com.kh`. Keep the public demo available.
-2. Create separate staging and production D1/R2 resources. Apply `drizzle/0000_operations.sql` and `drizzle/0001_ai_review.sql` through the migration journal once. Preserve applied migrations and exclude fictional records from the live database.
+2. Create separate staging and production D1/R2 resources. Apply `drizzle/0000_operations.sql`, `drizzle/0001_ai_review.sql` and `drizzle/0002_platform_activity.sql` through the migration journal once. Preserve applied migrations and exclude fictional records from the live database.
 3. Verify that Cloudflare Access supplies identity on production requests. Test anonymous requests and attempts with caller-supplied identity headers. Check that alternate Worker URLs are disabled.
 4. Create a protected staging deployment in `team` mode. Seed only real empty-system settings. The code rejects an initialized fictional database in team mode.
 5. Complete production personnel migration/admin directory visibility and bind verified sign-in accounts separately. Reconcile the 69 source records, leading-zero IDs and unresolved organizational information. Supply approval grants from a documented TEAMS decision, independently of job title.

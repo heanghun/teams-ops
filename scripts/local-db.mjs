@@ -10,6 +10,9 @@ export function localDb(filename = ':memory:') {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='ai_review_runs'").get()) {
     db.exec(readFileSync(new URL('../drizzle/0001_ai_review.sql', import.meta.url), 'utf8'));
   }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='platform_events'").get()) {
+    db.exec(readFileSync(new URL('../drizzle/0002_platform_activity.sql', import.meta.url), 'utf8'));
+  }
   function prepare(query) {
     let args = [];
     return {

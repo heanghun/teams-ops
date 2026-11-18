@@ -3,10 +3,11 @@ import { mailConnection, mailboxRoute, receiveMailbox } from './mail-service.js'
 import { emailConnection } from './email.js';
 import { importPersonnel, personnelImportKey, validImportToken, verifyRoster } from './roster.js';
 import { initialRecords } from './seed.js';
-import { DomainError, applyOperation, allowed } from './domain.js';
+import { DomainError, applyOperation, allowed, actionAccess, viewAccess } from './domain.js';
 import { tenderEstimate } from './tender-estimating.js';
 import { aiReviewAvailable, reviewWithAi } from './ai-review.js';
 import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, protection, requestKey, statePayload, visible } from './presentation.js';
+import { applyPlatformOperation, checkUserStorage, platformRuntimeEnv, platformState, recordPlatformIssue } from './platform.js';
 
 async function loadRows(db) {
   const {results}=await db.prepare('SELECT r.version, a.id, a.payload FROM revisions r LEFT JOIN records a ON 1=1 WHERE r.id=1 ORDER BY a.rowid').all();
@@ -70,31 +71,39 @@ function getActor(request,env,state,demo) {
   }
   const owner=env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
   const employee=state.rows.find(r=>r.kind==='employee'&&r.email===email);
+  if(owner && email===owner)return {id,email,name:employee?.name||'Platform owner',roles:['admin'],demo:false,platformAdmin:true,bootstrapOwner:true};
   if(employee){
     if(!employee.active)throw new DomainError('Your TEAMS access is disabled.',403);
+    if(employee.roles.includes('admin'))return {id,email,name:employee.name,roles:['admin'],demo:false,platformAdmin:true};
     return {id,email,roles:employee.roles,name:employee.name,demo:false};
   }
-  if(owner && email===owner)return {id,email,roles:['admin'],demo:false};
   throw new DomainError('Your account does not have TEAMS access.',403);
 }
 async function mutate(db,env,request,action,data,key,demo) {
   for(let attempt=0;attempt<4;attempt++){
     const state=await loadRows(db),actor=getActor(request,env,state,demo);
+    if(!allowed(actor,action))throw new DomainError('Your role cannot perform this action.',403);
     const prior=await db.prepare('SELECT actor, action, target FROM audit WHERE request_id=?').bind(key).first();
     if(prior){
       if(prior.actor!==actor.id||prior.action!==action)throw new DomainError('This request identifier was already used.',409);
       return {id:prior.target,replayed:true};
     }
+    const owner=env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
+    const memberships=action==='employee.upsert'?[data]:action==='master.import'&&data.type==='employee'&&Array.isArray(data.entries)?data.entries:[];
+    if(!demo&&memberships.some(entry=>String(entry?.email??'').trim().toLowerCase()===owner))throw new DomainError('The platform owner is managed in the deployment configuration.',403);
+    if(!demo&&action==='document.attach')checkUserStorage(state.rows,actor,data.size);
+    if(!demo&&action==='mail.send')checkUserStorage(state.rows,actor,(data.frozenFiles??[]).reduce((total,file)=>total+file.size,0));
     let outcome;
     const reset=action==='demo.reset';
     if(reset){
       if(!demo||actor.privateWorkspace||!allowed(actor,'settings.update')||data.confirm!=='RESET')throw new DomainError('Demo reset requires administrator access and confirmation.',403);
       outcome={target:null,changes:initialRecords(true)};
-    }else outcome=applyOperation(state.rows,actor,action,data,demo);
+    }else if(action.startsWith('platform.'))outcome=applyPlatformOperation(state.rows,actor,action,data,new Date().toISOString().slice(0,10));
+    else outcome=applyOperation(state.rows,actor,action,data,demo);
     const now=new Date().toISOString();
     const history=reset?[]:outcome.changes.map(row=>{
       const previous=state.rows.find(x=>x.id===row.id),fields=Object.keys(row).filter(k=>k!=='key'&&JSON.stringify(row[k])!==JSON.stringify(previous?.[k]));
-      return {id:row.id,kind:row.kind,fields,reason:row.personnelReason||row.assignmentReason||row.approvalReason||row.reason||row.closeReason||row.reference||row.revisionReason||null,
+      return {id:row.id,kind:row.kind,fields,reason:(action==='platform.director.initialize'&&row.authorizationReference)||row.personnelReason||row.assignmentReason||row.approvalReason||row.reason||row.closeReason||row.reference||row.revisionReason||null,
         before:previous?Object.fromEntries(fields.map(k=>[k,previous[k]??null])):null,after:Object.fromEntries(fields.map(k=>[k,row[k]??null]))};
     });
     const batch=[auditStmt(db,key,state.version+1,actor,action,outcome.target,history,now),...(reset?[db.prepare('DELETE FROM records')]:[]),writeRows(db,outcome.changes,now)];
@@ -175,6 +184,11 @@ async function route(request,env){
   if(request.method==='POST')assertWriteOrigin(request);
   const state=await seedDB(db,demo);
   const actor=getActor(request,env,state,demo);
+  if(actor.platformAdmin){
+    if(path==='/api/state'&&request.method==='GET')return json(await platformState(state,actor,env,viewAccess(actor),actionAccess(actor)));
+    if(path!=='/api/action')throw new DomainError('This route requires an authorized business role.',403);
+  }
+  if(!demo)env=platformRuntimeEnv(env,state.rows);
   if(path==='/api/tender-estimate'&&request.method==='GET')return json(tenderEstimate(state.rows,actor,url.searchParams.get('id')));
   if(path==='/api/state'&&request.method==='GET')return json({...statePayload(state,actor,demo),emailConnection:mailConnection(env,demo),aiReview:aiReviewAvailable(env,actor)});
   if(path==='/api/ai/review'&&request.method==='POST')return reviewWithAi(request,env,state,actor);
@@ -202,19 +216,20 @@ async function route(request,env){
   if(path==='/api/backup'&&request.method==='GET'){
     if(!hasFinanceAccess(actor))throw new DomainError('Full snapshots contain financial data and are restricted to MD and Finance Manager.',403);
     const {results}=await db.prepare('SELECT * FROM audit WHERE version<=? ORDER BY version').bind(state.version).all();
-    const records=state.rows.filter(row=>row.kind!=='personnel'||actor.personnelAdmin).map(row=>{
+    const records=state.rows.filter(row=>row.kind!=='platformSettings'&&(row.kind!=='personnel'||actor.personnelAdmin)).map(row=>{
       if(row.kind!=='document')return row;
       const {key,...metadata}=row;
       return metadata;
     });
-    return new Response(JSON.stringify({format:1,mode:demo?'fictional':'team',version:state.version,exportedAt:new Date().toISOString(),records,audit:actor.personnelAdmin?results:results.filter(row=>!row.action.startsWith('personnel.'))}),{
+    return new Response(JSON.stringify({format:1,mode:demo?'fictional':'team',version:state.version,exportedAt:new Date().toISOString(),records,
+      audit:results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.')))}),{
       headers:downloadHeaders('teams-operations-snapshot.json','application/json; charset=utf-8'),
     });
   }
   if(path==='/api/audit'&&request.method==='GET'){
     if(!actor.roles.some(r=>['admin','auditor','director','finance'].includes(r)))throw new DomainError('Audit history requires authorized access.',403);
     const {results}=await db.prepare('SELECT action,actor,target,created_at,version FROM audit ORDER BY version DESC LIMIT 100').all();
-    return json(results.filter(row=>(actor.personnelAdmin||!row.action.startsWith('personnel.'))&&financeAuditAllowed(row,actor,state.rows)));
+    return json(results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.'))&&financeAuditAllowed(row,actor,state.rows)));
   }
   if(path==='/api/upload'&&request.method==='POST'){
     if(!allowed(actor,'document.attach'))throw new DomainError('Your role cannot attach documents.',403);
@@ -229,6 +244,7 @@ async function route(request,env){
     const key=requestKey(form.get('key'));
     const previous=await db.prepare('SELECT actor,action,target FROM audit WHERE request_id=?').bind(key).first();
     if(previous?.actor===actor.id&&previous.action==='document.attach'&&previous.target)return json({id:previous.target,replayed:true});
+    if(!demo)checkUserStorage(state.rows,actor,file.size);
     const storageKey=(demo?'fictional/':'team/')+crypto.randomUUID();
     const purpose=String(form.get('purpose')||'');
 
@@ -253,13 +269,23 @@ async function route(request,env){
 }
 
 const operationsWorker = {
-  async fetch(request,env){
-    try{return await route(request,env);}
+  async fetch(request,env,ctx){
+    const started=Date.now();
+    let response;
+    try{response=await route(request,env);}
     catch(error){
-      if(error instanceof DomainError)return json({error:error.message},error.status);
-      console.error(error);
-      return json({error:'The operation could not be completed. Refresh and try again.'},500);
+      if(error instanceof DomainError)response=json({error:error.message},error.status);
+      else {
+        console.error('TEAMS request failed.',error instanceof Error?error.name:'Unknown error');
+        response=json({error:'The operation could not be completed. Refresh and try again.'},500);
+      }
     }
+    if(env.TEAMS_MODE==='team'&&new URL(request.url).pathname.startsWith('/api/')){
+      const trace=recordPlatformIssue(env.DB,request,response.status,Date.now()-started);
+      if(ctx?.waitUntil)ctx.waitUntil(trace);
+      else await trace;
+    }
+    return response;
   },
 };
 

@@ -5,7 +5,7 @@ import { localDb } from '../scripts/local-db.mjs';
 import { dateOffset } from '../server/seed.js';
 
 const people = {
-  owner:'owner@example.test', estimator:'estimator@example.test',
+  owner:'owner@example.test', estimator:'estimator@example.test', procurement:'procurement@example.test',
   reviewer:'reviewer@example.test', field:'field@example.test',
 };
 const line = {section:'Mechanical',description:'Copper Pipe',spec:'DN20',unit:'m',quantity:12.5,source:'PDF p.2, item M1',review:''};
@@ -31,7 +31,7 @@ async function setup(t,overrides={}){
     assert.equal(res.status,expected,JSON.stringify(value));
     return value.id;
   }
-  for(const [actor,role] of [['estimator','estimator'],['reviewer','manager'],['field','warehouse']]){
+  for(const [actor,role] of [['estimator','estimator'],['reviewer','manager'],['field','warehouse'],['procurement','procurement']]){
     await action('employee.upsert',{name:actor,email:people[actor],roles:[role],active:true},'owner');
   }
   const clientId=await action('client.create',{name:'Example Company'});
@@ -75,7 +75,7 @@ test('AI disclosure, role, origin, record and source selection are checked befor
 
 test('a reviewed PDF BOQ stays read-only until saved and catalog prices drive the approved-bid draft',async t=>{
   const c=await setup(t);
-  await c.action('material.create',{code:'P-20',name:line.description,spec:line.spec,unit:line.unit,category:'MEP',price:7.25,priceDate:dateOffset(),currency:'USD'},'owner');
+  await c.action('material.create',{code:'P-20',name:line.description,spec:line.spec,unit:line.unit,category:'MEP',price:7.25,priceDate:dateOffset(),currency:'USD'},'procurement');
   const previous=await (await c.request('/api/state')).json();
   const provider=t.mock.method(globalThis,'fetch',async (url,options)=>{
     assert.equal(url,'https://api.openai.com/v1/responses');

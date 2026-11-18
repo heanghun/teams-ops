@@ -39,7 +39,9 @@ test('A verified employee identity replaces supplied headers and team roles rema
   assert.equal(result.actor.email,'owner@example.test');
   assert.deepEqual(result.actor.roles,['admin']);
   assert.deepEqual(result.demoRoles,[]);
-  assert.deepEqual(result.records.map(record=>record.kind),['settings']);
+  assert.deepEqual(result.records.map(record=>record.kind),['employee']);
+  assert.equal(result.actor.platformAdmin,true);
+  assert.equal(result.platform.directorSetupAvailable,true);
 });
 
 test('Receiving mail still requires its provider signature',async()=>{

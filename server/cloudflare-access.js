@@ -16,7 +16,7 @@ export function cloudflareProductionWorker(worker) {
       headers.delete('oai-authenticated-user-email');
       if (url.pathname === '/api/mail/webhook' && request.method === 'POST') {
         // The mailbox handler verifies the signature on the original request body.
-        return worker.fetch(new Request(request, {headers}), env);
+        return worker.fetch(new Request(request, {headers}), env, ctx);
       }
       if (!ctx?.access || ctx.access.aud !== audience) {
         return json({error:'Sign in through the TEAMS Cloudflare Access application.'}, 401);
@@ -33,7 +33,7 @@ export function cloudflareProductionWorker(worker) {
       }
       headers.set('oai-authenticated-user-id', 'cloudflare-access:'+email);
       headers.set('oai-authenticated-user-email', email);
-      return worker.fetch(new Request(request, {headers}), env);
+      return worker.fetch(new Request(request, {headers}), env, ctx);
     },
   };
 }

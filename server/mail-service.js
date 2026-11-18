@@ -2,9 +2,10 @@ import { DomainError, allowed } from './domain.js';
 import { applyMailbox, mailboxAccess, plainMailText, cleanMailHtml } from './mail-model.js';
 import { emailConnection } from './email.js';
 import { json, visible, exportResponse, requestKey, downloadHeaders } from './presentation.js';
+import { checkUserStorage, platformRuntimeEnv } from './platform.js';
 
 export function mailboxRouting(env){try{return Object.fromEntries(Object.entries(JSON.parse(env.TEAMS_EMAIL_ROUTING||'{}')).filter(([box,a])=>['installation','maintenance','general','finance'].includes(box)&&Array.isArray(a)).map(([box,a])=>[box,a.map(x=>String(x).trim().toLowerCase()).filter(x=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))]));}catch{return {};}}
-export function mailConnection(env,demo){return {...emailConnection(env,demo),receiving:demo?'simulation':env.TEAMS_RESEND_WEBHOOK_SECRET&&Object.values(mailboxRouting(env)).some(x=>x.length)?'configured':'unconfigured',addresses:demo?{}:mailboxRouting(env)};}
+export function mailConnection(env,demo){return {...emailConnection(env,demo),receiving:demo?'simulation':env.TEAMS_EMAIL_INBOUND_ENABLED!=='false'&&env.TEAMS_RESEND_API_KEY&&env.TEAMS_RESEND_WEBHOOK_SECRET&&Object.values(mailboxRouting(env)).some(x=>x.length)?'configured':'unconfigured',addresses:demo?{}:mailboxRouting(env)};}
 export async function submitMailboxEmail(env,message,objects,fetcher=fetch){
   if(emailConnection(env,false).mode!=='configured')throw new DomainError('Live email is not connected. Configure a verified sender and provider key.',503);
   if(Date.now()-Date.parse(message.createdAt)>23*3600000)throw new DomainError('Its retry window closed. Reconcile this attempt with the provider before creating a new send.',409);
@@ -38,6 +39,7 @@ export async function mailboxRoute(request,env,ctx){
         if(!demo)for(const [index,file] of (draft.attachments||[]).entries()){
           const response=await mailboxRoute(new Request(new URL('/api/mail/file/'+encodeURIComponent(draft.id)+'/'+index,request.url)),env,ctx),blob=await response.blob();
           total+=blob.size;if(total>10000000)throw new DomainError('Attachments must total no more than 10 MB.',413);if(!env.BUCKET)throw new DomainError('Attachment storage unavailable.',503);
+          checkUserStorage(state.rows,actor,total);
           const storageKey='mail-outbox/'+crypto.randomUUID();await env.BUCKET.put(storageKey,blob.stream());created.push(storageKey);frozenFiles.push({key:storageKey,name:file.name,size:blob.size});
         }
         const reply=state.rows.find(x=>x.id===draft.replyToId),messageId=reply?.internetMessageId;
@@ -76,7 +78,9 @@ export async function receiveMailbox(request,env,ctx){
   const {db,seedDB,loadRows,writeRows,auditStmt,isConflict}=ctx;
   if(request.method!=='POST')throw new DomainError('Method not allowed.',405);if(!env.TEAMS_RESEND_WEBHOOK_SECRET||!env.TEAMS_RESEND_API_KEY||!db)throw new DomainError('Receiving email is not configured.',503);
   const raw=await request.text();if(raw.length>100000)throw new DomainError('Webhook too large.',413);const eventId=await verifyMailWebhook(raw,request.headers,env.TEAMS_RESEND_WEBHOOK_SECRET),event=JSON.parse(raw),key='mailhook_'+eventId.replace(/[^a-zA-Z0-9_-]/g,'_');
-  if(await db.prepare('SELECT request_id FROM audit WHERE request_id=?').bind(key).first())return json({received:true,replayed:true});await seedDB(db,false);
+  if(await db.prepare('SELECT request_id FROM audit WHERE request_id=?').bind(key).first())return json({received:true,replayed:true});
+  env=platformRuntimeEnv(env,(await seedDB(db,false)).rows);
+  if(event.type==='email.received'&&env.TEAMS_EMAIL_INBOUND_ENABLED==='false')throw new DomainError('Inbound email is paused.',503);
   const content=event.type==='email.received'?await providerGet(env,'/emails/receiving/'+providerId(event.data?.email_id)+'?html_format=cid'):null;
   for(let attempt=0;attempt<4;attempt++){
     const state=await loadRows(db),now=new Date().toISOString();let message;

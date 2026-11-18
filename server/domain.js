@@ -70,7 +70,12 @@ export function approvalFor(action, status){
   if(action==='claim.transition'&&status==='Certified')return 'claim';
   return null;
 }
-export const actionAccess = actor => [...new Set(actor.roles.flatMap(role=>operations[role]??[]))];
+const platformActions = ['employee.upsert','master.import','platform.director.initialize','platform.email.update','platform.ai.update','platform.storage.default','platform.storage.user'];
+const directorSettingsActions = ['settings.update','warehouse.create','master.import','stock.adjust'];
+export const actionAccess = actor => actor.platformAdmin ? platformActions : [...new Set([
+  ...actor.roles.flatMap(role=>operations[role]??[]),
+  ...(actor.demo===false&&actor.roles.includes('director')?directorSettingsActions:[]),
+])];
 export function eligibleApprovals(assigned){
   return Object.keys(approvalLabels).filter(key=>{
     const eligible={tender:['mep','manager','director'],quote:['mep','manager','director'],purchasing:['procurement','manager','director'],variation:['mep','manager','director'],agreement:['manager','director'],stock:['admin'],claim:['finance']};
@@ -78,7 +83,11 @@ export function eligibleApprovals(assigned){
   });
 }
 const has = (actor, ...wanted) => wanted.some(role => actor.roles.includes(role));
-export const allowed = (actor, action) => (!financeAction(action)||hasFinanceAccess(actor)) && actor.roles.some(role => operations[role]?.includes('*') || operations[role]?.includes(action));
+export const allowed = (actor, action) => {
+  if(financeAction(action)&&!hasFinanceAccess(actor))return false;
+  const actions=actionAccess(actor);
+  return actions.includes('*')||actions.includes(action);
+};
 export const modules = {
   admin:['*'], director:['home','clients','tenders','quotes','procurement','projects','maintenance','billing','reports','documents'],
   manager:['home','clients','tenders','quotes','procurement','projects','maintenance','billing','reports','documents'],
@@ -98,12 +107,15 @@ export const modules = {
 };
 for(const role of ['estimator','mep','manager','director','project','procurement','maintenance','finance','adminSupport','auditor'])modules[role].push('mail');
 export const viewAccess = actor => {
+  if(actor.platformAdmin)return ['home','platform-users','platform-settings','platform-activity'];
   const access=[...new Set(actor.roles.flatMap(role => modules[role] ?? []))];
+  if(actor.demo===false&&actor.roles.includes('director'))access.push('settings','inventory');
   if(hasFinanceAccess(actor))return access;
   return (access.includes('*')?[...new Set(['settings',...Object.values(modules).flat()])]:access).filter(module=>!['*','billing','reports'].includes(module));
 };
 export const hasNamedAssignments = actor => !!(actor.privateWorkspace||actor.demoAssignments);
 export function hasFullModule(actor,module){
+  if(actor.platformAdmin)return viewAccess(actor).includes(module);
   if(['billing','reports'].includes(module)&&!hasFinanceAccess(actor))return false;
   return actor.roles.some(role=>!limitedRoles.includes(role)&&!(role==='technician'&&module==='maintenance')&&
     (modules[role]?.includes('*')||modules[role]?.includes(module)));
@@ -875,13 +887,23 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
       const assigned=Array.isArray(data.roles)?data.roles:[data.roles];
       ensure(assigned.length>0&&assigned.every(r=>roles.includes(r)),'Select valid employee roles.');
       const prior=list('employee').find(x=>x.email===email);
+      if(data.id)ensure(prior?.id===data.id,'The employee sign-in email must match the selected account.',409);
+      if(assigned.includes('admin')||prior?.roles.includes('admin')){
+        ensure(actor.bootstrapOwner,'Only the configured platform owner can manage Platform Administrator accounts.',403);
+        ensure(!assigned.includes('admin')||assigned.every(role=>role==='admin'),'Use a separate account for Platform Administrator access.');
+      }
       ensure(has(actor,'director')||JSON.stringify(assigned.filter(r=>['director','finance'].includes(r)).sort())===JSON.stringify((prior?.roles||[]).filter(r=>['director','finance'].includes(r)).sort()),'Only the Managing Director can grant, remove or modify protected financial access.',403);
       ensure(!prior||has(actor,'director')||!prior.roles.some(r=>['director','finance'].includes(r)),'Only the Managing Director can edit accounts with financial access.',403);
+      if(prior?.active&&prior.roles.includes('director')&&(data.active===false||!assigned.includes('director'))){
+        ensure(list('employee').some(x=>x.id!==prior.id&&x.active&&x.roles.includes('director')&&!x.roles.includes('admin')),
+          'Activate another Managing Director before removing access for the last active one.',409);
+      }
       const values={name:field(data.name,'Employee name'),email,roles:[...new Set(assigned)],active:data.active!==false};
       target=prior?update(prior,values):make('employee',values);break;
     }
     case 'master.import': {
       const input=choose(data.type,['client','supplier','material','project','contract','employee','opening'],'import type');
+      ensure(!actor.platformAdmin||input==='employee','Platform Administrators can import employee accounts only.',403);
       const actions={client:'client.create',supplier:'supplier.create',material:'material.create',project:'project.create',contract:'contract.create',employee:'employee.upsert'};
       const source=field(data.source,'Source filename');
       ensure(Array.isArray(data.entries)&&data.entries.length>0&&data.entries.length<=100,'Confirm between 1 and 100 rows per import.');
