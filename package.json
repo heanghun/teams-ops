@@ -16,6 +16,7 @@
     "node": ">=24"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "linkedom": "0.18.12",
     "wrangler": "4.164.0"
   }

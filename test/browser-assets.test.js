@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { versionBrowserAssets } from '../scripts/browser-assets.mjs';
+import { createHash } from 'node:crypto';
+import { embedBrowserStartup, versionBrowserAssets } from '../scripts/browser-assets.mjs';
 const version='0123456789abcdef';
 test('A new HTML document and its complete module graph bypass an old cache-first PWA release',()=>{
   const input={
@@ -33,4 +34,20 @@ test('Asset versioning preserves external integrations and rejects an invalid re
   const source="import x from 'external-package'; const remote='https://provider.example.test/sdk.js';";
   assert.equal(versionBrowserAssets({'/app.js':source},version).assets['/app.js'],source);
   assert.throws(()=>versionBrowserAssets({},'bad build'),/Invalid browser build/);
+});
+
+test('The production page includes its startup assets and hashes the exact inline JavaScript',()=>{
+  const {assets}=versionBrowserAssets({
+    '/':'<link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>',
+    '/style.css':'body{color:black}',
+    '/app.js':"import './actions.js';",
+    '/actions.js':'export const action=1;',
+    '/vendor/pdf.min.mjs':'export const pdf=1;',
+  },version);
+  const shell=embedBrowserStartup(assets,"const load=()=>import('/vendor/pdf.min.mjs');",version);
+  assert.match(shell.html,/<style>body\{color:black\}<\/style>/);
+  assert.doesNotMatch(shell.html,/(?:src|href)=/);
+  const script=shell.html.match(/<script type="module">([\s\S]*)<\/script>/)[1];
+  assert.match(script,/pdf\.min\.mjs\?v=0123456789abcdef/);
+  assert.equal(shell.scriptHash,createHash('sha256').update(script).digest('base64'));
 });

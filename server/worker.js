@@ -154,7 +154,9 @@ async function route(request,env){
     }
     if(asset!=null){
       const contentType=path==='/'||path.endsWith('.html')?'text/html':path.endsWith('.webmanifest')?'application/manifest+json':path.endsWith('.css')?'text/css':path.endsWith('.txt')?'text/plain':'text/javascript';
-      return new Response(asset,{headers:{...protection,'Content-Type':contentType+'; charset=utf-8',...(path==='/sw.js'?{'Service-Worker-Allowed':'/','Cache-Control':'no-cache'}:{}),'Content-Security-Policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"}});
+      const scriptSources=path==='/'&&typeof startupScriptHash==='string'?`'self' 'sha256-${startupScriptHash}'`:"'self'";
+      const contentSecurityPolicy=`default-src 'self'; style-src 'self' 'unsafe-inline'; script-src ${scriptSources}; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'`;
+      return new Response(asset,{headers:{...protection,'Content-Type':contentType+'; charset=utf-8',...(path==='/sw.js'?{'Service-Worker-Allowed':'/','Cache-Control':'no-cache'}:{}),'Content-Security-Policy':contentSecurityPolicy}});
     }
     return new Response('Page not found.',{status:404});
   }

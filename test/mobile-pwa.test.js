@@ -29,7 +29,7 @@ test('Manifest launches the same scoped application and provides real large and 
   const manifest=JSON.parse(await readFile(new URL('../public/manifest.webmanifest',import.meta.url),'utf8'));
   assert.equal(manifest.display,'standalone');assert.equal(manifest.scope,'/');assert.equal(manifest.start_url,'/#home');
   for(const icon of manifest.icons){const bytes=await readFile(new URL('../public'+icon.src,import.meta.url));assert.equal(bytes.readUInt32BE(16),Number(icon.sizes.split('x')[0]));assert.equal(bytes.readUInt32BE(20),Number(icon.sizes.split('x')[1]));}
-  const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');assert.match(html,/apple-touch-icon/);assert.match(html,/viewport-fit=cover/);assert.doesNotMatch(JSON.stringify(manifest),/private|personnel|emailFrom|token/i);
+  const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');assert.match(html,/apple-touch-icon/);assert.match(html,/viewport-fit=cover/);assert.match(html,/<link rel="manifest"[^>]*crossorigin="use-credentials"/);assert.doesNotMatch(JSON.stringify(manifest),/private|personnel|emailFrom|token/i);
 });
 
 test('Service worker never intercepts operational writes, private APIs, identity or non-allowlisted files',async()=>{
