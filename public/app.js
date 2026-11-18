@@ -4,8 +4,8 @@ import { quoteClientItems } from '../server/documents.js';
 import { createRoleSession, roleHome } from './role-session.js';
 import { initLocalization, translate as t, translateInterface, getLanguage, languageControl } from './localization.js';
 import { initPwa, promptInstall, installHelp, applyAppUpdate } from './pwa.js';
-import { mailboxes, cleanMailHtml } from '../server/mail-model.js';
-import { approvalFor, actionAccess, viewAccess, serviceTypes, agreementSections, agreementDefaults, templateReviewFindings, employeeRoleChoices, canManageEmployee } from '../server/domain.js';
+import { mailboxes, mailboxAccess, cleanMailHtml } from '../server/mail-model.js';
+import { approvalFor, actionAccess, viewAccess, serviceTypes, agreementSections, agreementDefaults, templateReviewFindings, employeeRoleChoices, canManageEmployee, assignmentEmployeeId, usesManagementEmail } from '../server/domain.js';
 import { planningPriorities, planningStatuses } from './role-planning.js';
 import {icon} from './icons.js';
 import {decisionRights,operatingUnits,serviceWorkflows} from './operating-model.js';
@@ -44,7 +44,7 @@ const permissions=()=>state.data?.permissions??['*'];
 const isPlatform=()=>state.data?.actor.platformAdmin===true;
 const isPrivate=()=>state.data?.privateWorkspace===true;
 const namedAssignments=()=>state.data?.namedAssignments===true;
-const demoEmployee=()=>state.data?.actor.previewEmployeeId||
+const demoEmployee=()=>state.data&&assignmentEmployeeId(state.data.actor)||
   (state.data?.people?.some(person=>person.id==='demo-person:'+state.role)?'demo-person:'+state.role:'');
 const show=key=>{
   if(!state.data)return key==='home';
@@ -413,8 +413,9 @@ function employeeAccountActions(record){
   if(record.bootstrapOwner)return e('Deployment owner');
   if(record.removedOn)return accountCanEdit(record)?actionButton('employee.restore','Restore',record.id):'';
   return (accountCanEdit(record)?actionButton('employee.upsert','Edit',record.id)+
-    actionButton('employee.remove','Remove',record.id):'')+
-    (isPlatform()&&record.email?actionButton('platform.storage.user','Set storage limit',record.id):'');
+    actionButton('employee.remove','Remove',record.id)+
+    (state.data.actor.directoryAssignments&&record.roles.length?button('Telegram access','telegram.manage|'+record.id,{small:true}):''):'')+
+    (isPlatform()&&!record.bootstrapOwner&&(record.email||record.active)?actionButton('platform.storage.user','Set storage limit',record.id):'');
 }
 
 function platformDashboard(){
@@ -456,11 +457,17 @@ function employeeAccountsPage(){
 }
 function platformSettings(){
   const p=state.data.platform;
+  const telegram=p.telegram;
   return page('Admin settings','Configure platform connections and upload limits.','',
     block('Email (Resend)','<div class="modal-body">'+details([['Sending',p.email.outbound?'Enabled':'Disabled'],['Receiving',p.email.inbound?'Enabled':'Disabled'],
       ['Sender',p.email.fromEmail||'Unconfigured'],['API credentials',p.mailKeySet?'Configured':'Required'],['Webhook signing secret',p.webhookKeySet?'Configured':'Required'],
       ...Object.entries(mailboxes).map(([key,label])=>[label,(p.email.routing[key]??[]).join(', ')])])+
       '<p class="muted">Provider keys and webhook secrets are stored in Cloudflare Worker Secrets.</p></div>',button('Configure email','platform.email.update',{small:true}))+
+    block('Telegram alerts','<div class="modal-body">'+details([['Alert delivery',telegram.enabled?'Enabled':'Disabled'],
+      ['Bot token',telegram.botConfigured?'Configured':'Required'],
+      ...Object.entries(telegram.workstreams).map(([key,label])=>[label,(telegram.routes[key]??[]).join(', ')])])+
+      '<p class="muted">Alerts link back to TEAMS. Group messages contain no work records or attachments.</p></div>',
+      button('Configure Telegram','platform.telegram.update',{small:true}))+
     block('Document storage (R2)','<div class="modal-body">'+details([['Storage binding',p.storageBound?'Connected':'Unavailable'],
       ['Default per-user limit',storageCap(p.defaultStorageMb)],['Account storage used',storageAmount(p.storageUsedBytes)]])+
       '<p class="muted">Limits cover uploaded documents and stored outbound email attachment copies.</p></div>',button('Set default storage limit','platform.storage.default',{small:true}))+
@@ -1517,12 +1524,16 @@ function formOperation(cmd,id,arg,extra){
     case 'employee.upsert':{
       if(!accountCanEdit(r)||r?.removedOn)return;
       const choices=employeeRoleChoices(state.data.actor).map(role=>[role,roleLabel(role)]);
+      const native=state.data.actor.directoryAssignments;
+      const currentMailboxes=r?.mailboxGrants??(native?[]:mailboxAccess({roles:r?.roles??[],platformAdmin:r?.roles?.includes('admin')}));
       return config(r?'Edit employee':isPlatform()?'Add user':'Add employee',[text('name','Employee name',r?.name),
         text('employeeId','Employee ID',r?.employeeId,optional),
         text('position','Job title',r?.position,optional),text('department','Department',r?.department,optional),text('team','Team',r?.team,optional),
-        text('email','Sign-in email',r?.email,{...optional,type:'email',help:'Required for active access.'}),
+        text('email','Sign-in email',r?.email,{...optional,type:'email',help:native?'Required for management. Staff can sign in with a Telegram invitation.':'Required for active access.'}),
         select('roles','Assigned roles',choices,r?.roles??[],{multiple:true,required:false,help:'Hold Control or Command to select multiple roles.'}),
         input('active','Active access',r?.active??false,{type:'checkbox',required:false}),
+        select('mailboxGrants','Mailbox access',Object.entries(mailboxes),currentMailboxes,{multiple:true,required:false,
+          help:'Select shared mailboxes permitted by this employee’s assigned roles.'}),
         textarea('jobFunctions','Job functions',r?.jobFunctions,optional),
         textarea('reason','Change reason','',optional),
       ],{open:false,values:{create:!r}});
@@ -1547,6 +1558,13 @@ function formOperation(cmd,id,arg,extra){
         text('fromEmail','Verified sender email',email.fromEmail,{...optional,type:'email'}),
         ...Object.entries(mailboxes).map(([key,label])=>textarea(key,label,(email.routing[key]??[]).join('\n'),{...optional,help:'Enter one receiving address per line.'})),
       ],{wide:true,open:false});
+    }
+    case 'platform.telegram.update':{
+      const {telegram}=state.data.platform;
+      return config('Configure Telegram',[input('enabled','Enable Telegram alerts',telegram.enabled,{type:'checkbox'}),
+        ...Object.entries(telegram.workstreams).map(([key,label])=>textarea(key,label,(telegram.routes[key]??[]).join('\n'),
+          {...optional,help:'Enter one negative Telegram group ID per line.'}))],
+      {open:false,wide:true,notes:'Add the TEAMS bot to each approved group before enabling alerts.'});
     }
     case 'platform.ai.update':{
       const {ai}=state.data.platform;
@@ -1706,7 +1724,10 @@ function profile(){
     return;
   }
   if(!state.data?.demoRoles.length){
-    openModal('Account','',details([['Email',current?.email],['Role',current?.roles.map(roleLabel).join(', ')]]),'<a class="btn" href="/cdn-cgi/access/logout" target="_top">Sign out</a>');
+    const logout=current?.authMethod?'/sign-out':'/cdn-cgi/access/logout';
+    const connect=current?.authMethod==='email'?'<form method="post" action="/auth/telegram/connect"><button type="submit" class="btn">Connect Telegram alerts</button></form>':'';
+    openModal('Account','',details([['Email',current?.email],['Role',current?.roles.map(roleLabel).join(', ')]]),
+      connect+'<a class="btn" href="'+logout+'" target="_top">Sign out</a>');
     return;
   }
   const cards=state.data.demoRoles.flatMap(role=>{
@@ -1719,6 +1740,31 @@ function profile(){
   openModal('Switch demonstration role',"Choose a role or named PIC. The demo opens that role's work area.",
     '<div data-role-switcher><label class="field">Find a role or employee<input type="search" id="role-search" placeholder="Search roles or employee names" autocomplete="off"></label><p id="role-switch-error" class="form-error" role="alert" hidden></p><p id="role-switch-pending" class="form-note" role="status" hidden>Switching role...</p><div class="role-choice-grid">'+cards+'</div><p id="role-search-empty" class="empty" hidden>No matching roles or employees.</p></div>',button('Close','close'),true);
 
+}
+
+async function telegramAccountDialog(id,operation='',chatId=''){
+  const record=rec(id);
+  if(!record||!accountCanEdit(record))return;
+  try{
+    const url='/api/telegram/account';
+    if(operation){
+      const result=await(await api(url,{method:'POST',json:{employeeId:id,operation,chatId}})).json();
+      if(result.invite){
+        openModal('Telegram invitation',record.name,'<p class="form-note">Send this link privately to the employee. It expires in 24 hours. Review their Telegram account after they accept.</p>'+
+          '<label class="field">Invitation link<input readonly data-no-translate value="'+A(result.invite)+'"></label>',button('Close','close'));
+        return;
+      }
+      toast(operation==='approve'?'Telegram access approved.':'Telegram connection removed.');
+    }
+    const {account,canInvite}=await(await api(url+'?employeeId='+encodeURIComponent(id))).json();
+    const content=account?details([['Telegram name',account.name],['Telegram username',account.username?'@'+account.username:''],
+      ['Telegram account ID',account.chat_id],['Status',account.approved_at?'Approved':'Pending approval']]):
+      '<p class="empty">'+e(usesManagementEmail(record.roles)?'Management connects Telegram alerts from Account.':'This employee has no linked Telegram account.')+'</p>';
+    const actions=account?(account.approved_at?'':button('Approve verified account','telegram.change|'+id+'|approve|'+account.chat_id,{primary:true}))+
+      button('Remove connection','telegram.change|'+id+'|revoke'):
+      (canInvite?button('Create Telegram invitation','telegram.change|'+id+'|invite',{primary:true}):'');
+    openModal('Telegram access',record.name,content,button('Close','close')+actions);
+  }catch(error){toast(error.message,true);}
 }
 function downloadBlob(blob,filename){
   const href=URL.createObjectURL(blob),link=document.createElement('a');
@@ -1838,6 +1884,8 @@ document.addEventListener('click',event=>{
     case 'queue.full':openModal('Work queue','Open records ordered by due date.',table(['Record','Category','Due','Status'],sorted(workItems(),'date',false),x=>[recordCell(x,x.code),e(x.category),e(formatDate(x.date,true)),status(x.stage)]),button('Close','close',{small:true}),true);break;
     case 'receive.pick':receivePicker();break;
     case 'profile':profile();break;
+    case 'telegram.manage':telegramAccountDialog(id);break;
+    case 'telegram.change':telegramAccountDialog(id,arg,extra);break;
     case 'agreement.review':agreementReview();break;
     case 'dispatch.scan':case 'dispatch.compose':composeMailbox({relatedId:id});break;
     case 'dispatch.retry':toast('Use Email to compose a new message. Historical send records are retained.');break;

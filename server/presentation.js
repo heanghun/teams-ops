@@ -2,7 +2,7 @@ import { createInvoicePdf } from './invoice-document.js';
 import { hasFinanceAccess, financialRecord } from './finance.js';
 import { mailboxAccess } from './mail-model.js';
 import { createLetterheadPdf } from './letterhead.js';
-import { DomainError, roles, hasNamedAssignments, approvalLabels, eligibleApprovals, actionAccess, allowed, hasFullModule, projectAssigned, jobAssigned, viewAccess, reportData, bidAssessment, quotationTotals, availableStock, projectPosition, invoiceBalance, employeeMatchesEmail } from './domain.js';
+import { DomainError, roles, hasNamedAssignments, approvalLabels, eligibleApprovals, actionAccess, allowed, hasFullModule, projectAssigned, jobAssigned, viewAccess, reportData, bidAssessment, quotationTotals, availableStock, projectPosition, invoiceBalance, employeeMatchesEmail, assignmentEmployeeId } from './domain.js';
 import { createPdf, createXlsx, createClientXlsx, documentContent } from './documents.js';
 
 export const protection = {
@@ -23,8 +23,9 @@ export const demoRoles=['admin',...roles.filter(x=>!['admin','hr_head'].includes
 export const attachmentTypes = new Set(['application/pdf','text/plain','text/csv','image/jpeg','image/png','image/webp','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/zip','application/x-zip-compressed','application/vnd.ms-excel','application/msword','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/vnd.dwg','application/acad','application/x-dwg','application/dwg','image/vnd.dxf','application/dxf','application/x-dxf','image/gif','application/rtf','application/octet-stream']);
 
-function ownedJob(row, actor) {
-  return row.kind!=='job'||actor.demo||!actor.roles.includes('technician')||actor.roles.some(x=>x==='admin'||x==='maintenance'||x==='auditor')||employeeMatchesEmail(actor,row.technicianEmail);
+function ownedJob(row,actor,rows) {
+  return row.kind!=='job'||actor.demo||!actor.roles.includes('technician')||actor.roles.some(x=>x==='admin'||x==='maintenance'||x==='auditor')||
+    employeeMatchesEmail(actor,row.technicianEmail)||actor.directoryAssignments&&jobAssigned(rows,row,assignmentEmployeeId(actor));
 }
 export function visible(row,actor,rows){
   if(!row)return false;
@@ -36,8 +37,8 @@ export function visible(row,actor,rows){
   if(row.kind==='mail')return mailboxAccess(actor).includes(row.mailbox);
   if(row.kind==='personnel')return actor.personnelAdmin===true;
   if(row.kind==='task'&&!hasNamedAssignments(actor))return false;
-  if(actor.previewEmployeeId){
-    const employeeId=actor.previewEmployeeId;
+  const employeeId=assignmentEmployeeId(actor);
+  if(employeeId){
     const fieldTeam=actor.roles.some(role=>['installation_lead','installation_technician'].includes(role));
     if(['project','task','progress','requirement','cost','variation'].includes(row.kind)&&!hasFullModule(actor,'projects')){
       if(!fieldTeam||['cost','variation'].includes(row.kind))return false;
@@ -49,7 +50,8 @@ export function visible(row,actor,rows){
       if(fieldTeam&&['po','request','requisition'].includes(row.kind))return projectAssigned(rows,row.projectId,employeeId);
       return false;
     }
-    if(row.kind==='job'&&!hasFullModule(actor,'maintenance')&&(actor.roles.includes('technician')||actor.roles.includes('maintenance_lead')))return jobAssigned(rows,row,employeeId);
+    if(row.kind==='job'&&!hasFullModule(actor,'maintenance')&&(actor.roles.includes('technician')||actor.roles.includes('maintenance_lead')))
+      return jobAssigned(rows,row,employeeId)||actor.directoryAssignments&&employeeMatchesEmail(actor,row.technicianEmail);
     if(row.kind==='contract'&&!hasFullModule(actor,'maintenance')&&(actor.roles.includes('technician')||actor.roles.includes('maintenance_lead')))
       return row.supervisorEmployeeId===employeeId||row.technicianEmployeeId===employeeId||
         rows.some(job=>job.kind==='job'&&job.contractId===row.id&&jobAssigned(rows,job,employeeId));
@@ -62,12 +64,12 @@ export function visible(row,actor,rows){
   if(row.kind==='agreement')return hasFullModule(actor,'maintenance')&&canView(actor,'maintenance');
   if(row.kind==='dispatch')return canView(actor,'documents')&&visible(rows.find(x=>x.id===row.parentId),actor,rows);
   if(row.kind==='document')return canView(actor,'documents')&&visible(rows.find(x=>x.id===row.parentId),actor,rows);
-  return canView(actor,typeMap[row.kind])&&ownedJob(row,actor);
+  return canView(actor,typeMap[row.kind])&&ownedJob(row,actor,rows);
 }
 function mask(row,actor,rows){
   if(row.kind==='employee'&&actor.demo===false){
-    const {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn}=row;
-    return {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn};
+    const {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn,mailboxGrants}=row;
+    return {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn,mailboxGrants};
   }
   const data={...row};
   if(!hasFinanceAccess(actor)){
@@ -77,7 +79,7 @@ function mask(row,actor,rows){
     if(row.kind==='employee'&&row.roles?.some(r=>['director','finance'].includes(r)))return {id:row.id,kind:row.kind,name:row.name,roles:row.roles,active:row.active};
   }
   if(row.kind==='mail'){delete data.frozenFiles;delete data.providerPayload;if(row.direction==='incoming')delete data.bcc;}
-  if(actor.previewEmployeeId){
+  if(assignmentEmployeeId(actor)){
     if(row.kind==='contract'&&!hasFullModule(actor,'maintenance')){
       delete data.value;delete data.billing;delete data.technicianEmail;
       return data;
@@ -137,11 +139,12 @@ export const downloadHeaders=(name,type)=>({...protection,'Content-Type':type,'C
 export function statePayload(state,actor,demo){
     const records=state.rows.filter(r=>visible(r,actor,state.rows)).map(r=>mask(r,actor,state.rows));
     const reports=reportData(state.rows);
-    const directory=state.rows.filter(row=>row.kind===(actor.demoAssignments?'demo-person':'personnel'));
+    const directory=state.rows.filter(row=>actor.directoryAssignments?row.kind==='employee'&&!row.removedOn&&!row.roles.includes('admin'):
+      row.kind===(actor.demoAssignments?'demo-person':'personnel'));
     const assignmentActions=['project.assign','project.create','project.award','request.create','task.create','task.assign','po.create','delivery.assign','po.receive','stock.move','contract.create','job.assign'];
     const people=hasNamedAssignments(actor)&&(actor.personnelAdmin||assignmentActions.some(action=>allowed(actor,action)))?
       directory.map(({id,name,position})=>({id,name,position})):[];
-    const restricted={today:reports.today,currency:reports.currency,alerts:reports.alerts.filter(a=>(hasFinanceAccess(actor)||!['Collections','Billing','Projects'].includes(a.category))&&canView(actor,a.view)&&visible(state.rows.find(x=>x.id===a.id),actor,state.rows)),activeProjects:canView(actor,'projects')?(actor.previewEmployeeId&&!hasFullModule(actor,'projects')?records.filter(x=>x.kind==='project'&&['Awarded','Active','On Hold'].includes(x.status)).length:reports.activeProjects):null,
+    const restricted={today:reports.today,currency:reports.currency,alerts:reports.alerts.filter(a=>(hasFinanceAccess(actor)||!['Collections','Billing','Projects'].includes(a.category))&&canView(actor,a.view)&&visible(state.rows.find(x=>x.id===a.id),actor,state.rows)),activeProjects:canView(actor,'projects')?(assignmentEmployeeId(actor)&&!hasFullModule(actor,'projects')?records.filter(x=>x.kind==='project'&&['Awarded','Active','On Hold'].includes(x.status)).length:reports.activeProjects):null,
       openTenders:canView(actor,'tenders')?reports.openTenders:null};
     return {version:state.version,actor,permissions:viewAccess(actor),actions:actionAccess(actor),
       demoRoles:demo&&!actor.privateWorkspace?demoRoles:[],privateWorkspace:!!actor.privateWorkspace,namedAssignments:hasNamedAssignments(actor),people,
@@ -159,7 +162,7 @@ export function exportResponse(state,actor,demo,url){
     if(kind==='quote'&&!internal&&!['Approved','Sent','Accepted','Rejected','Expired','Superseded'].includes(record?.status))throw new DomainError('Approve the quotation before exporting a client copy.',422);
     if(kind==='agreement'&&record?.status!=='Approved')throw new DomainError('Approve this agreement before printing the client copy.',422);
     if(kind==='po'&&(!hasFullModule(actor,'procurement')||actor.roles.every(x=>['warehouse','technician','maintenance'].includes(x))))throw new DomainError('Supplier prices require authorized access.',403);
-    if(kind==='inventory'&&actor.previewEmployeeId&&!hasFullModule(actor,'inventory'))throw new DomainError('The stock ledger export is outside your assignment.',403);
+    if(kind==='inventory'&&assignmentEmployeeId(actor)&&!hasFullModule(actor,'inventory'))throw new DomainError('The stock ledger export is outside your assignment.',403);
     if(kind==='invoice'){
       if(!hasFinanceAccess(actor))throw new DomainError('Financial export is restricted.',403);
       if(!record?.nativeInvoice||record.status!=='Issued'||!record.snapshot)throw new DomainError('Issue the native invoice before exporting a final client copy. Legacy references retain their original attachments.',422);

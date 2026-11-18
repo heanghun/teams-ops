@@ -6,6 +6,7 @@
   "workers_dev": false,
   "preview_urls": false,
   "keep_vars": true,
+  "triggers": { "crons": ["*/5 * * * *"] },
   "routes": [
     { "pattern": "ops.teams.com.kh", "custom_domain": true }
   ],

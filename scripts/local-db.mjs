@@ -13,6 +13,9 @@ export function localDb(filename = ':memory:') {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='platform_events'").get()) {
     db.exec(readFileSync(new URL('../drizzle/0002_platform_activity.sql', import.meta.url), 'utf8'));
   }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='teams_sessions'").get()) {
+    db.exec(readFileSync(new URL('../drizzle/0003_teams_connectivity.sql', import.meta.url), 'utf8'));
+  }
   function prepare(query) {
     let args = [];
     return {

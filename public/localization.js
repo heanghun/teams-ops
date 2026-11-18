@@ -5,6 +5,20 @@ Admin dashboard|ផ្ទាំងគ្រប់គ្រងប្រព័ន�
 User management|ការគ្រប់គ្រងអ្នកប្រើប្រាស់
 Admin settings|ការកំណត់ប្រព័ន្ធ
 Activity logs|កំណត់ហេតុសកម្មភាព
+Telegram alerts|ការជូនដំណឹងតាម Telegram
+Configure Telegram|កំណត់ Telegram
+Enable Telegram alerts|បើកការជូនដំណឹងតាម Telegram
+Connect Telegram alerts|ភ្ជាប់ការជូនដំណឹងតាម Telegram
+Telegram access|សិទ្ធិចូលតាម Telegram
+Telegram invitation|ការអញ្ជើញតាម Telegram
+Create Telegram invitation|បង្កើតការអញ្ជើញតាម Telegram
+Invitation link|តំណភ្ជាប់ការអញ្ជើញ
+Telegram account ID|លេខសម្គាល់គណនី Telegram
+Telegram username|ឈ្មោះអ្នកប្រើ Telegram
+Telegram name|ឈ្មោះក្នុង Telegram
+Approve verified account|អនុម័តគណនីដែលបានផ្ទៀងផ្ទាត់
+Remove connection|ផ្តាច់ការតភ្ជាប់
+Mailbox access|សិទ្ធិប្រើប្រអប់អ៊ីមែល
 My folders|ថតឯកសាររបស់ខ្ញុំ
 Folder path|ទីតាំងថតឯកសារ
 Folder|ថតឯកសារ

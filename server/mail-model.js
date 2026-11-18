@@ -5,8 +5,10 @@ export const mailboxes={installation:'Projects & Installation',maintenance:'Main
 const mailEnsure=(condition,message,status=422)=>{if(!condition)throw new DomainError(message,status);};
 export function mailboxAccess(actor){
   if(actor.platformAdmin)return [];
-  if(actor.roles.some(r=>['admin','manager','director','auditor'].includes(r)))return Object.keys(mailboxes).filter(box=>box!=='finance'||hasFinanceAccess(actor));
-  return [...new Set(actor.roles.flatMap(r=>r==='maintenance'?['maintenance']:['estimator','mep','project','procurement'].includes(r)?['installation']:r==='finance'?['general','finance']:r==='adminSupport'?['general']:[]))];
+  const authorized=actor.roles.some(r=>['admin','manager','director','auditor'].includes(r))?
+    Object.keys(mailboxes).filter(box=>box!=='finance'||hasFinanceAccess(actor)):
+    [...new Set(actor.roles.flatMap(r=>r==='maintenance'?['maintenance']:['estimator','mep','project','procurement'].includes(r)?['installation']:r==='finance'?['general','finance']:r==='adminSupport'?['general']:[]))];
+  return actor.mailboxGrants?authorized.filter(box=>actor.mailboxGrants.includes(box)):authorized;
 }
 export function mailRecordAllowed(record,actor,rows){
   if(!record||!hasFinanceAccess(actor)&&financialRecord(record,rows))return false;

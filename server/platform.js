@@ -1,5 +1,6 @@
-import { DomainError, applyOperation } from './domain.js';
+import { DomainError, applyOperation, teamsEmployeeIdentity } from './domain.js';
 import { mailboxRouting, mailConnection } from './mail-service.js';
+import { telegramConfiguration, telegramWorkstreams } from './telegram-notifications.js';
 
 const platformSettingsId = 'platform-settings';
 const mailboxNames = ['installation', 'maintenance', 'general', 'finance'];
@@ -89,6 +90,15 @@ export function applyPlatformOperation(rows, actor, action, data, today) {
         dailyLimit:platformInteger(data.dailyLimit, 'Team daily limit', 1, 200),
         userDailyLimit:platformInteger(data.userDailyLimit, 'User daily limit', 1, 50)}});
     }
+    case 'platform.telegram.update': {
+      const routes=Object.fromEntries(Object.keys(telegramWorkstreams).map(category=>{
+        const groups=[...new Set(String(data[category]??'').trim().split(/[\s,;]+/).filter(Boolean))];
+        if(groups.length>4||groups.some(id=>!/^-[1-9]\d{2,17}$/.test(id)))
+          throw new DomainError('Use up to four negative Telegram group IDs per work area.');
+        return [category,groups];
+      }));
+      return save({telegram:{enabled:data.enabled===true,routes}});
+    }
     default:
       throw new DomainError('Unknown platform operation.', 400);
   }
@@ -122,7 +132,7 @@ function storageUsage(rows) {
 
 export function checkUserStorage(rows, actor, additionalBytes) {
   if (!additionalBytes) return;
-  const employee = rows.find(row => row.kind === 'employee' && row.email === actor.email);
+  const employee = rows.find(row => row.kind === 'employee' && (actor.employeeId?row.id===actor.employeeId:actor.email&&row.email===actor.email));
   const limit = employee?.storageLimitMb ?? savedPlatformSettings(rows).defaultStorageMb;
   if (limit != null && (storageUsage(rows).get(actor.id) ?? 0) + additionalBytes > limit * megabyte) {
     throw new DomainError('This file exceeds your storage limit. Contact your Platform Administrator.', 413);
@@ -183,8 +193,8 @@ export async function platformState(state, actor, env, permissions, actions) {
   const accounts = state.rows.filter(row => row.kind === 'employee' && row.email !== ownerEmail).map(row => ({
     id:row.id, kind:row.kind, name:row.name, email:row.email, roles:row.roles.includes('admin') ? ['admin'] : row.roles,
     active:row.active, employeeId:row.employeeId, position:row.position, department:row.department, team:row.team,
-    jobFunctions:row.jobFunctions, removedOn:row.removedOn,
-    storageLimitMb:row.storageLimitMb ?? null, storageUsedBytes:usage.get('cloudflare-access:'+(row.identityEmail||row.email)) ?? 0,
+    jobFunctions:row.jobFunctions, removedOn:row.removedOn, mailboxGrants:row.mailboxGrants,
+    storageLimitMb:row.storageLimitMb ?? null, storageUsedBytes:usage.get(teamsEmployeeIdentity(row)) ?? 0,
   }));
   accounts.unshift({id:'platform-owner',kind:'employee',name:'Platform owner',email:ownerEmail,roles:['admin'],active:true,bootstrapOwner:true,
     storageUsedBytes:usage.get('cloudflare-access:'+ownerEmail) ?? 0,storageLimitMb:null});
@@ -199,5 +209,6 @@ export async function platformState(state, actor, env, permissions, actions) {
     ai:config.ai ?? {enabled:env.TEAMS_AI_ENABLED === 'true', model:env.TEAMS_OPENAI_MODEL ?? '',
       dailyLimit:Number(env.TEAMS_AI_DAILY_LIMIT) || 30, userDailyLimit:Number(env.TEAMS_AI_USER_DAILY_LIMIT) || 8},
     aiKeySet:Boolean(env.TEAMS_OPENAI_API_KEY), activity:await platformActivity(env.DB),
+    telegram:{...telegramConfiguration(state.rows),workstreams:telegramWorkstreams,botConfigured:Boolean(env.TEAMS_TELEGRAM_BOT_TOKEN)},
   }};
 }

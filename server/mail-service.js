@@ -3,6 +3,7 @@ import { applyMailbox, mailboxAccess, plainMailText, cleanMailHtml } from './mai
 import { emailConnection } from './email.js';
 import { json, visible, exportResponse, requestKey, downloadHeaders } from './presentation.js';
 import { checkUserStorage, platformRuntimeEnv } from './platform.js';
+import { queueTelegramWork } from './telegram-notifications.js';
 
 export function mailboxRouting(env){try{return Object.fromEntries(Object.entries(JSON.parse(env.TEAMS_EMAIL_ROUTING||'{}')).filter(([box,a])=>['installation','maintenance','general','finance'].includes(box)&&Array.isArray(a)).map(([box,a])=>[box,a.map(x=>String(x).trim().toLowerCase()).filter(x=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))]));}catch{return {};}}
 export function mailConnection(env,demo){return {...emailConnection(env,demo),receiving:demo?'simulation':env.TEAMS_EMAIL_INBOUND_ENABLED!=='false'&&env.TEAMS_RESEND_API_KEY&&env.TEAMS_RESEND_WEBHOOK_SECRET&&Object.values(mailboxRouting(env)).some(x=>x.length)?'configured':'unconfigured',addresses:demo?{}:mailboxRouting(env)};}
@@ -96,6 +97,8 @@ export async function receiveMailbox(request,env,ctx){
       if(old.deliveryEventAt&&event.created_at<old.deliveryEventAt||['Delivered','Bounced'].includes(old.status)&&['Provider accepted','Delayed'].includes(status))return json({received:true,ignored:true});
       message={...old,status,internetMessageId:String(event.data.message_id||old.internetMessageId||'').replace(/[\r\n]/g,'').slice(0,1000),deliveryEventAt:event.created_at||now};
     }
-    try{await db.batch([auditStmt(db,key,state.version+1,{id:'email-provider'},'mail.receive',message,[{id:message.id,event:event.type}],now),writeRows(db,[message],now)]);return json({received:true});}catch(error){if(!isConflict(error))throw error;if(await db.prepare('SELECT request_id FROM audit WHERE request_id=?').bind(key).first())return json({received:true,replayed:true});}
+    try{await db.batch([auditStmt(db,key,state.version+1,{id:'email-provider'},'mail.receive',message,[{id:message.id,event:event.type}],now),
+      writeRows(db,[message],now),...queueTelegramWork(env,state.rows,message,content?'mail.received':'mail.delivery',key)]);return json({received:true});}
+    catch(error){if(!isConflict(error))throw error;if(await db.prepare('SELECT request_id FROM audit WHERE request_id=?').bind(key).first())return json({received:true,replayed:true});}
   }throw new DomainError('Mailbox changed during receipt. Retry the provider event.',409);
 }

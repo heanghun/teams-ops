@@ -1,5 +1,5 @@
 import { hasFinanceAccess, financeAction, receivableInvoice, applyInvoiceOperation } from './finance.js';
-import { applyMailbox } from './mail-model.js';
+import { applyMailbox, mailboxAccess } from './mail-model.js';
 import { dateOffset, roundMoney } from './seed.js';
 
 export class DomainError extends Error {
@@ -56,6 +56,10 @@ operations.finance.push('client.create','client.update','milestone.create','proj
 operations.director.push('employee.upsert','personnel.roles');
 operations.auditor.push('mail.update');operations.manager.push('client.update');
 export const roles = Object.keys(operations);
+const managementEmailRoles=['admin','director','manager','mep','project','maintenance','finance','hr_head'];
+export const usesManagementEmail = profiles => profiles.some(role=>managementEmailRoles.includes(role));
+export const teamsEmployeeIdentity = employee => employee.identityPrincipal||(employee.identityEmail||employee.email?
+  'cloudflare-access:'+(employee.identityEmail||employee.email):'employee:'+employee.id);
 export const limitedRoles = ['installation_lead','installation_technician','maintenance_lead','logistics'];
 export const approvalLabels = {
   tender:'Tender authorization', quote:'Quotation and acceptance authorization', purchasing:'Purchase requisition approval',
@@ -71,7 +75,7 @@ export function approvalFor(action, status){
   if(action==='claim.transition'&&status==='Certified')return 'claim';
   return null;
 }
-const platformActions = ['employee.upsert','employee.remove','employee.restore','master.import','platform.director.initialize','platform.email.update','platform.ai.update','platform.storage.default','platform.storage.user'];
+const platformActions = ['employee.upsert','employee.remove','employee.restore','master.import','platform.director.initialize','platform.email.update','platform.telegram.update','platform.ai.update','platform.storage.default','platform.storage.user'];
 const directorSettingsActions = ['settings.update','warehouse.create','master.import','stock.adjust','employee.remove','employee.restore'];
 export const actionAccess = actor => actor.platformAdmin ? platformActions : [...new Set([
   ...actor.roles.flatMap(role=>operations[role]??[]),
@@ -125,10 +129,12 @@ export const viewAccess = actor => {
   const access=[...new Set(actor.roles.flatMap(role => modules[role] ?? []))];
   if(actor.demo===false&&actor.roles.includes('director'))access.push('settings','inventory');
   if(actor.demo===false&&has(actor,'director','hr_head'))access.push('team-employees');
+  if(actor.mailboxGrants&&!mailboxAccess(actor).length&&access.includes('mail'))access.splice(access.indexOf('mail'),1);
   if(hasFinanceAccess(actor))return access;
   return (access.includes('*')?[...new Set(['settings',...Object.values(modules).flat()])]:access).filter(module=>!['*','billing','reports'].includes(module));
 };
-export const hasNamedAssignments = actor => !!(actor.privateWorkspace||actor.demoAssignments);
+export const hasNamedAssignments = actor => !!(actor.privateWorkspace||actor.demoAssignments||actor.directoryAssignments);
+export const assignmentEmployeeId = actor => actor.previewEmployeeId||(actor.directoryAssignments?actor.employeeId:null);
 export function hasFullModule(actor,module){
   if(actor.platformAdmin)return viewAccess(actor).includes(module);
   if(['billing','reports'].includes(module)&&!hasFinanceAccess(actor))return false;
@@ -260,6 +266,7 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
   if(action.startsWith('mail.'))return applyMailbox(rows,actor,action,data,demo);
   const approval=approvalFor(action,data.status);
   if(actor.previewEmployeeId&&approval)ensure(actor.approvals?.includes(approval),'This employee has no separate authorization for this decision.',403);
+  const assignedEmployeeId=assignmentEmployeeId(actor);
   const byId = new Map(rows.map(r=>[r.id,r]));
   const changes = new Map();
   const settings = byId.get('settings');
@@ -284,11 +291,13 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
   const person = id => {
     if(!id)return null;
     ensure(hasNamedAssignments(actor),'Employee assignments are unavailable in this workspace.',403);
-    return get(id,actor.demoAssignments?'demo-person':'personnel');
+    const employee=get(id,actor.directoryAssignments?'employee':actor.demoAssignments?'demo-person':'personnel');
+    if(actor.directoryAssignments)ensure(!employee.removedOn&&!employee.roles.includes('admin'),'Choose an employee in the operations directory.');
+    return employee;
   };
   const projectScope = p => {
-    if(actor.previewEmployeeId&&!hasFullModule(actor,'projects')&&!hasFullModule(actor,'procurement')&&!hasFullModule(actor,'maintenance'))
-      ensure(projectAssigned(rows,p.id,actor.previewEmployeeId),'This project is outside your assignment.',403);
+    if(assignedEmployeeId&&!hasFullModule(actor,'projects')&&!hasFullModule(actor,'procurement')&&!hasFullModule(actor,'maintenance'))
+      ensure(projectAssigned(rows,p.id,assignedEmployeeId),'This project is outside your assignment.',403);
   };
   const internalPerson = (id,label,existing) => {
     const named=person(id);
@@ -512,8 +521,8 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       const p=projectOf(old?.projectId??data.projectId);
       projectScope(p);
       if(action==='task.update'){
-        if(actor.previewEmployeeId&&!hasFullModule(actor,'projects')&&!has(actor,'installation_lead'))
-          ensure(old.ownerEmployeeId===actor.previewEmployeeId,'This task is assigned to another employee.',403);
+        if(assignedEmployeeId&&!hasFullModule(actor,'projects')&&!has(actor,'installation_lead'))
+          ensure(old.ownerEmployeeId===assignedEmployeeId,'This task is assigned to another employee.',403);
         target=update(old,{status:choose(data.status,['Open','In Progress','Completed'],'task status'),progressNote:note(data.notes,1000)});
       } else {
         const owner=person(data.ownerEmployeeId);
@@ -575,7 +584,7 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       }
       const p=projectOf(data.projectId),m=materialOf(data.materialId),quantity=quantityOf(data.quantity),needed=validDate(data.needed,'required date');
       projectScope(p);
-      const requester=person(actor.previewEmployeeId||data.requesterEmployeeId);
+      const requester=person(assignedEmployeeId||data.requesterEmployeeId);
       if(actor.privateWorkspace)ensure(requester,'Select a requesting employee.');
       ensure(!list('request').some(x=>x.projectId===p.id&&x.materialId===m.id&&x.needed===needed&&x.quantity===quantity&&!['Closed','Cancelled','Rejected'].includes(x.status)),'A matching open requisition already exists.');
       const price=data.price?money(data.price,'Unit price',p.currency):verifiedPrice(m,p.currency);
@@ -609,7 +618,7 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       const s=get(data.supplierId,'supplier'),offer=data.offerId?get(data.offerId,'offer'):null;
       if(offer) ensure(offer.requestId===r.id&&offer.supplierId===s.id,'This offer belongs to a different supplier or requisition.');
       const price=offer?.price??r.price;
-      const buyer=person(data.buyerEmployeeId||actor.previewEmployeeId),delivery=person(data.deliveryEmployeeId);
+      const buyer=person(data.buyerEmployeeId||assignedEmployeeId),delivery=person(data.deliveryEmployeeId);
       if(actor.privateWorkspace)ensure(buyer,'Select the employee responsible for the order.');
       ensure(price<=r.price,'The offer exceeds the approved price. Cancel and submit a revised requisition.');
       const otherOpen=list('po').filter(x=>x.projectId===r.projectId&&x.materialId===r.materialId&&!['Cancelled','Received','Closed'].includes(x.status)).reduce((sum,x)=>sum+x.quantity-x.received,0);
@@ -629,8 +638,8 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
         ensure(employee,'Select the delivery employee.');
         target=update(order,{deliveryEmployeeId:employee.id,deliveryName:employee.name,deliveryAssignmentReason:field(data.reason,'Assignment reason')});
       } else if(action==='delivery.proof'){
-        if(actor.previewEmployeeId&&!hasFullModule(actor,'procurement'))
-          ensure(order.deliveryEmployeeId===actor.previewEmployeeId,'This delivery is assigned to another employee.',403);
+        if(assignedEmployeeId&&!hasFullModule(actor,'procurement'))
+          ensure(order.deliveryEmployeeId===assignedEmployeeId,'This delivery is assigned to another employee.',403);
         target=update(order,{deliveryProof:field(data.reference,'Delivery proof reference'),deliveryProofAt:today,deliveryProofBy:actor.id});
       } else {
         projectScope(projectOf(order.projectId));
@@ -650,7 +659,7 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       ensure(quantity<=roundQty(po.quantity-po.received),'Delivered quantity exceeds the open PO balance.');
       const reference=field(data.reference,'Supplier delivery reference');
       ensure(!list('movement').some(x=>x.poId===po.id&&x.reason.toLowerCase()===reference.toLowerCase()),'This supplier delivery reference has already been received for the PO.');
-      const condition=choose(data.condition,['Usable','Damaged'],'condition'),handler=person(data.handlerEmployeeId||actor.previewEmployeeId);
+      const condition=choose(data.condition,['Usable','Damaged'],'condition'),handler=person(data.handlerEmployeeId||assignedEmployeeId);
       if(actor.privateWorkspace)ensure(handler,'Select the warehouse employee receiving the stock.');
       target=make('movement',{type:'Receipt',handlerEmployeeId:handler?.id,handlerName:handler?.name,materialId:po.materialId,parentId:po.id,poId:po.id,projectId:po.projectId,warehouseId:w.id,quantity,delta:condition==='Usable'?quantity:0,cost:po.price,currency:po.currency,reason:reference,condition});
       if(condition==='Usable'){
@@ -672,7 +681,7 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       const reason=field(data.reason,'Reference or reason');
       const p=data.projectId?projectOf(data.projectId):null;
       const job=data.jobId?get(data.jobId,'job'):null;
-      const handler=person(data.handlerEmployeeId||actor.previewEmployeeId),recipientEmployee=person(data.recipientEmployeeId);
+      const handler=person(data.handlerEmployeeId||assignedEmployeeId),recipientEmployee=person(data.recipientEmployeeId);
       if(actor.privateWorkspace)ensure(handler,'Select the warehouse employee handling the movement.');
       const before=stock(m.id,w.id,p?.id),base={materialId:m.id,warehouseId:w.id,quantity,currency:m.currency,reason,projectId:p?.id??null,jobId:job?.id??null,
         handlerEmployeeId:handler?.id,handlerName:handler?.name,recipientEmployeeId:recipientEmployee?.id};
@@ -797,18 +806,19 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
     case 'job.assign': {
       const j=get(data.id,'job');
       ensure(j.status!=='Completed','Completed service visits are locked.');
-      if(actor.previewEmployeeId&&!hasFullModule(actor,'maintenance'))ensure(jobAssigned(rows,j,actor.previewEmployeeId),'This service visit is outside your assignment.',403);
+      if(assignedEmployeeId&&!hasFullModule(actor,'maintenance'))ensure(jobAssigned(rows,j,assignedEmployeeId),'This service visit is outside your assignment.',403);
       const assigned=person(data.technicianEmployeeId),lead=person(data.leadEmployeeId);
       if(actor.privateWorkspace)ensure(assigned,'Select a maintenance technician.');
-      if(actor.previewEmployeeId&&!hasFullModule(actor,'maintenance')&&lead)
+      if(assignedEmployeeId&&!hasFullModule(actor,'maintenance')&&lead)
         ensure(lead.id===j.leadEmployeeId,'Only a maintenance supervisor can change the lead.',403);
       target=update(j,{technician:assigned?.name??field(data.technician,'Technician'),technicianEmployeeId:assigned?.id??j.technicianEmployeeId,
         leadEmployeeId:lead?.id??j.leadEmployeeId,technicianEmail:actor.privateWorkspace?j.technicianEmail:note(data.technicianEmail,150).toLowerCase(),scheduled:validDate(data.scheduled,'visit date'),assignReason:field(data.reason,'Assignment or rescheduling reason')});break;
     }
     case 'job.update': {
       const j=get(data.id,'job');
-      if(actor.previewEmployeeId&&!hasFullModule(actor,'maintenance'))ensure(jobAssigned(rows,j,actor.previewEmployeeId),'This service visit is outside your assignment.',403);
-      if (!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,j.technicianEmail),'This service visit is assigned to another technician.',403);
+      if(assignedEmployeeId&&!hasFullModule(actor,'maintenance'))ensure(jobAssigned(rows,j,assignedEmployeeId),'This service visit is outside your assignment.',403);
+      if (!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,j.technicianEmail)||
+        actor.directoryAssignments&&jobAssigned(rows,j,assignedEmployeeId),'This service visit is assigned to another technician.',403);
       ensure(j.status!=='Completed','Completed service reports are locked.');
       const status=choose(data.status,['In Progress','Completed'],'service status'),selected=Array.isArray(data.completed)?data.completed:[];
       const completed=j.checklist.filter(x=>selected.includes(x)),minutes=optionalNumber(data.minutes,'Minutes worked',10000);
@@ -920,15 +930,26 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       ensure(!assigned.includes('admin')||assigned.length===1,'Use a separate account for Platform Administrator access.');
       const active=data.active??prior?.active??Boolean(email);
       ensure(typeof active==='boolean','Choose an access status.');
-      ensure(!active||(email&&assigned.length),'Active access requires a sign-in email and at least one role.');
+      ensure(!active||assigned.length&&(email||actor.directoryAssignments&&!usesManagementEmail(assigned)),
+        'Active access requires an approved sign-in method and at least one role.');
       ensureDirectorCoverage(actor,employees,prior,active,assigned);
       const values={name:field(data.name??prior?.name,'Employee name'),email,roles:assigned,active,employeeId,
         position:note(data.position??prior?.position,220),department:note(data.department??prior?.department,150),team:note(data.team??prior?.team,150),
         jobFunctions:note(data.jobFunctions??prior?.jobFunctions),accessReason:note(data.reason,500)};
+      if(data.mailboxGrants!==undefined){
+        const eligible=mailboxAccess({roles:assigned,platformAdmin:assigned.includes('admin')});
+        ensure(Array.isArray(data.mailboxGrants)&&data.mailboxGrants.every(box=>eligible.includes(box)),
+          'Choose mailboxes allowed by the assigned roles.');
+        values.mailboxGrants=[...new Set(data.mailboxGrants)];
+      }else if(prior?.mailboxGrants){
+        const eligible=mailboxAccess({roles:assigned,platformAdmin:assigned.includes('admin')});
+        values.mailboxGrants=prior.mailboxGrants.filter(box=>eligible.includes(box));
+      }
       if(prior?.email&&prior.email!==email){
         values.identityEmail=prior.identityEmail||prior.email;
         values.formerSignInEmails=[...new Set([...(prior.formerSignInEmails??[]),prior.email])].filter(value=>value!==email);
       }
+      if(prior&&prior.email!==email)values.identityPrincipal=teamsEmployeeIdentity(prior);
       target=prior?update(prior,values):make('employee',values);break;
     }
     case 'employee.remove':
@@ -1023,7 +1044,8 @@ function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
       const parent=byId.get(data.parentId);
       const byKind={client:'clients',project:'clients',tender:'tenders',quote:'quotes',request:'procurement',requisition:'procurement',po:'procurement',contract:'maintenance',agreement:'maintenance',mail:'mail',job:'maintenance',claim:'billing',invoice:'billing'};
       ensure(parent&&byKind[parent.kind]&&(viewAccess(actor).includes('*')||viewAccess(actor).includes(byKind[parent.kind])), 'Select an accessible document record.',403);
-      if(parent.kind==='job'&&!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,parent.technicianEmail),'This service visit is assigned to another technician.',403);
+      if(parent.kind==='job'&&!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,parent.technicianEmail)||
+        actor.directoryAssignments&&jobAssigned(rows,parent,assignedEmployeeId),'This service visit is assigned to another technician.',403);
       target=make('document',{name:field(data.name,'Filename'),parentId:parent.id,projectId:parent.kind==='project'?parent.id:parent.projectId,parentKind:parent.kind,key:data.key,size:data.size,type:data.type});break;
     }
     default: throw new DomainError('Unknown operation.',400);

@@ -95,7 +95,7 @@ Use `deployment/production.env.example` as a blank configuration template. Store
 | `TEAMS_RESEND_API_KEY` | Secret provider key for sending and retrieving received mail |
 | `TEAMS_EMAIL_FROM` | Sender display name and verified address approved by TEAMS |
 | `TEAMS_RESEND_WEBHOOK_SECRET` | Secret signature key for `/api/mail/webhook` |
-| `TEAMS_EMAIL_ROUTING` | JSON map of `installation`, `maintenance`, `general` to arrays of real receiving addresses |
+| `TEAMS_EMAIL_ROUTING` | JSON map of `installation`, `maintenance`, `general`, `finance` to arrays of real receiving addresses |
 | `TEAMS_AI_ENABLED` | Keep `false` until the AI acceptance below passes. Set `true` in the approved team environment |
 | `TEAMS_OPENAI_API_KEY` | Secret restricted to the TEAMS OpenAI project. Keep staging and production keys separate |
 | `TEAMS_OPENAI_MODEL` | Tested model or snapshot ID. Evaluate `gpt-6.1-terra` with the pilot document set |
@@ -104,6 +104,19 @@ Use `deployment/production.env.example` as a blank configuration template. Store
 Do not set `TEAMS_PERSONNEL_BOOTSTRAP` or leave a personnel import token enabled in production. The existing bootstrap is for the protected staff demonstration, not production migration.
 
 No employee login emails, passwords, missing IDs, organizational appointments, reporting lines or approval authority may be invented. Directory employment records and login memberships are separate. Importing an employee must not activate an account.
+
+## Telegram and Resend rollout
+
+The default sign-in is Cloudflare Access. Test the native TEAMS sign-in at a separate HTTPS pilot hostname using a dedicated D1 database, a private file bucket, and approved test accounts. Keep production Access in service during the pilot.
+
+1. Apply the D1 migrations, including `0003_teams_connectivity.sql`. The migration adds session, invitation, linking, and delivery tables.
+2. In BotFather, configure a TEAMS Operations bot and enable **Bot Settings > Web Login**. Register the exact HTTPS origin and `/auth/telegram/callback` URL for the deployment. Use the default RS256 signing algorithm. Set `TEAMS_TELEGRAM_CLIENT_ID`, `TEAMS_TELEGRAM_CLIENT_SECRET` and `TEAMS_TELEGRAM_BOT_TOKEN` for that bot.
+3. Verify the sign-in sender with Resend and set `TEAMS_AUTH_EMAIL_FROM`. Either use `TEAMS_AUTH_RESEND_API_KEY` for sign-in delivery or set the shared `TEAMS_RESEND_API_KEY`. Generate and store a separate random `TEAMS_AUTH_SECRET` of at least 32 bytes in Worker Secrets. Set the approved `TEAMS_OWNER_EMAIL`.
+4. Set `TEAMS_AUTH_MODE=teams` in the pilot. Verify email access for the owner and management, a Telegram invitation and approval for one staff member, role boundaries, session expiry, and sign-out. The pilot's sign-in routes must be reachable before authentication. Use the D1-backed TEAMS session to protect its application and APIs.
+5. In **User management** or **Employees**, create an active employee with an assigned staff role. Open **Telegram access > Create Telegram invitation** and share the link privately. It expires in 24 hours. The employee chooses their Telegram account. An authorized administrator reviews the verified account with the employee and approves it before sign-in can succeed. Managers use their approved email and can choose **Account > Connect Telegram alerts**.
+6. Configure verified sending and receiving addresses in **Admin settings > Email (Resend)**. Set the signed webhook to the deployment's `/api/mail/webhook` and the receiving routes agreed with TEAMS. Assign **Mailbox access** only to selected accounts within their role limits. Use a dedicated receiving subdomain where the company already has mail hosting.
+7. Add the bot to the approved Telegram groups. In **Admin settings > Telegram alerts**, enter the group chat IDs by work area and enable alerts. Direct notifications use approved Telegram connections. Work alerts link to the authorized TEAMS workspace. The five-minute scheduled Worker processes the queue and retries temporary failures. Due-work reminders run in the 08:00 Phnom Penh hour, and report reminders run on Monday mornings.
+8. After pilot acceptance, apply the migration and configure production secrets before switching the production sign-in mode. Update the Access protection for the TEAMS hostname in the same cutover. Preserve the old Access configuration and audience for rollback. Check that anonymous API requests fail, the owner can sign in and sign out, and staff can access assigned work.
 
 ## AI review acceptance
 

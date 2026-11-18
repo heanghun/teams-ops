@@ -78,6 +78,8 @@ The MD and HR Department Head use **Employees** to manage official titles, emplo
 
 Cloudflare Access and TEAMS must both authorize a live sign-in. Directory-only records do not occupy Cloudflare seats. Manage Cloudflare Access policy, sessions and seat removal in the Cloudflare dashboard when offboarding a tester.
 
+The Worker also supports TEAMS sign-in with Resend codes for management and approved Telegram invitations for other staff. See [the connectivity rollout](docs/PRODUCTION_DEPLOYMENT.md#telegram-and-resend-rollout) for the provider settings, approval flow and pilot sequence.
+
 Under **Settings > Import records**, select the record type and download its Excel template. Fill in the Data worksheet using the column rules and examples on Instructions. Keep IDs, codes and dates as text. The importer suggests a header row and lets you change it in existing workbooks. It validates and commits the batch as one operation.
 
 In **Documents > My folders**, a user with write access to Documents can create folders and upload or download files up to 10 MB each, subject to their storage quota. Folder files are accessible through that account. **Record attachments** follow the permissions of the linked operational record.

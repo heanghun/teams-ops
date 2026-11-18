@@ -3,7 +3,9 @@ import { mailConnection, mailboxRoute, receiveMailbox } from './mail-service.js'
 import { emailConnection } from './email.js';
 import { importPersonnel, personnelImportKey, validImportToken, verifyRoster } from './roster.js';
 import { initialRecords } from './seed.js';
-import { DomainError, applyOperation, allowed, actionAccess, viewAccess } from './domain.js';
+import { DomainError, applyOperation, allowed, actionAccess, viewAccess, usesManagementEmail } from './domain.js';
+import { hasNativeSignIn, manageTelegramAccount } from './sign-in.js';
+import { queueTelegramWork, queueTelegramReminders, deliverTelegramQueue } from './telegram-notifications.js';
 import { tenderEstimate } from './tender-estimating.js';
 import { aiReviewAvailable, reviewWithAi } from './ai-review.js';
 import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, protection, requestKey, statePayload, visible, isPersonalDocument, canViewDocumentAudit } from './presentation.js';
@@ -70,12 +72,19 @@ function getActor(request,env,state,demo) {
     return {id:'demo:'+id+':'+role,email,roles:[role],demo:true};
   }
   const owner=env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
-  const employee=email&&state.rows.find(r=>r.kind==='employee'&&r.email===email);
-  if(owner && email===owner)return {id,email,name:employee?.name||'Platform owner',roles:['admin'],demo:false,platformAdmin:true,bootstrapOwner:true};
+  const nativeAccount=hasNativeSignIn(env)?request.headers.get('x-teams-native-account'):'';
+  const authMethod=nativeAccount?request.headers.get('x-teams-auth-method'):'';
+  const employee=state.rows.find(row=>row.kind==='employee'&&(nativeAccount?row.id===nativeAccount:email&&row.email===email));
+  if(owner&&email===owner&&(!nativeAccount||nativeAccount==='platform-owner'&&authMethod==='email'))
+    return {id,email,name:employee?.name||'Platform owner',roles:['admin'],demo:false,platformAdmin:true,bootstrapOwner:true,
+      ...(nativeAccount?{authMethod,directoryAssignments:true,employeeId:nativeAccount}:{})};
   if(employee){
     if(!employee.active||employee.removedOn)throw new DomainError('Your TEAMS access is disabled.',403);
+    if(nativeAccount&&(authMethod!==(usesManagementEmail(employee.roles)?'email':'telegram')||
+      authMethod==='email'&&employee.email!==email))throw new DomainError('Sign in again with the approved method.',401);
     const principal=employee.identityEmail&&id.startsWith('cloudflare-access:')?'cloudflare-access:'+employee.identityEmail:id;
-    const identity={id:principal,email,name:employee.name,formerSignInEmails:employee.formerSignInEmails??[],demo:false};
+    const identity={id:principal,email,name:employee.name,employeeId:employee.id,formerSignInEmails:employee.formerSignInEmails??[],demo:false,
+      ...(nativeAccount?{authMethod,directoryAssignments:true,mailboxGrants:employee.mailboxGrants??[]}:employee.mailboxGrants?{mailboxGrants:employee.mailboxGrants}:{})};
     if(employee.roles.includes('admin'))return {...identity,roles:['admin'],platformAdmin:true};
     return {...identity,roles:employee.roles};
   }
@@ -98,6 +107,11 @@ async function mutate(db,env,request,action,data,key,demo) {
       (ownerAccount&&entry?.id===ownerAccount.id)))throw new DomainError('The platform owner is managed in the deployment configuration.',403);
     if(!demo&&['document.attach','document.store'].includes(action))checkUserStorage(state.rows,actor,data.size);
     if(!demo&&action==='mail.send')checkUserStorage(state.rows,actor,(data.frozenFiles??[]).reduce((total,file)=>total+file.size,0));
+    if(action==='platform.telegram.update'&&data.enabled===true){
+      if(!env.TEAMS_TELEGRAM_BOT_TOKEN)throw new DomainError('Configure the Telegram bot token before enabling alerts.',422);
+      try{await db.prepare('SELECT id FROM teams_telegram_outbox LIMIT 1').first();}
+      catch{throw new DomainError('Apply the TEAMS connectivity database migration first.',503);}
+    }
     let outcome;
     const reset=action==='demo.reset';
     if(reset){
@@ -113,6 +127,15 @@ async function mutate(db,env,request,action,data,key,demo) {
         before:previous?Object.fromEntries(fields.map(k=>[k,previous[k]??null])):null,after:Object.fromEntries(fields.map(k=>[k,row[k]??null]))};
     });
     const batch=[auditStmt(db,key,state.version+1,actor,action,outcome.target,history,now),...(reset?[db.prepare('DELETE FROM records')]:[]),writeRows(db,outcome.changes,now)];
+    if(!demo){
+      batch.push(...queueTelegramWork(env,state.rows,outcome.target,action,key));
+      if(hasNativeSignIn(env))for(const change of history.filter(item=>item.kind==='employee'&&
+        item.fields.some(field=>['active','email','removedOn','roles'].includes(field)))){
+        batch.push(db.prepare('DELETE FROM teams_sessions WHERE account_id=?').bind(change.id));
+        if(change.after.removedOn||change.after.active===false)
+          batch.push(db.prepare('DELETE FROM teams_telegram_invites WHERE employee_id=?').bind(change.id));
+      }
+    }
     try{await db.batch(batch);return {id:outcome.target?.id??null};}
     catch(error){if(!isConflict(error))throw error;}
   }
@@ -190,6 +213,7 @@ async function route(request,env){
   if(request.method==='POST')assertWriteOrigin(request);
   const state=await seedDB(db,demo);
   const actor=getActor(request,env,state,demo);
+  if(path==='/api/telegram/account'&&!demo)return manageTelegramAccount(request,env,actor,state.rows);
   if(actor.platformAdmin){
     if(path==='/api/state'&&request.method==='GET')return json(await platformState(state,actor,env,viewAccess(actor),actionAccess(actor)));
     if(path!=='/api/action')throw new DomainError('This route requires an authorized business role.',403);
@@ -296,6 +320,12 @@ const operationsWorker = {
       else await trace;
     }
     return response;
+  },
+  async scheduled(controller,env){
+    if(env.TEAMS_MODE!=='team'||!env.TEAMS_TELEGRAM_BOT_TOKEN||!env.DB)return;
+    const state=await loadRows(env.DB);
+    await queueTelegramReminders(env,state.rows,controller.scheduledTime);
+    await deliverTelegramQueue(env,state.rows);
   },
 };
 
