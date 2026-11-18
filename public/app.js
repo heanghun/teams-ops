@@ -5,7 +5,7 @@ import { createRoleSession, roleHome } from './role-session.js';
 import { initLocalization, translate as t, translateInterface, getLanguage, languageControl } from './localization.js';
 import { initPwa, promptInstall, installHelp, applyAppUpdate } from './pwa.js';
 import { mailboxes, cleanMailHtml } from '../server/mail-model.js';
-import { approvalFor, actionAccess, viewAccess, serviceTypes, agreementSections, agreementDefaults, templateReviewFindings } from '../server/domain.js';
+import { approvalFor, actionAccess, viewAccess, serviceTypes, agreementSections, agreementDefaults, templateReviewFindings, employeeRoleChoices, canManageEmployee } from '../server/domain.js';
 import { planningPriorities, planningStatuses } from './role-planning.js';
 import {icon} from './icons.js';
 import {decisionRights,operatingUnits,serviceWorkflows} from './operating-model.js';
@@ -24,7 +24,7 @@ const nav=[
   ['Commercial & Design',[['clients','Clients & Projects','people'],['tenders','Tenders & Bidding','target'],['materials','Material Prices','box'],['quotes','Quotations & Estimates','blueprint']]],
   ['Project & Service Delivery',[['projects','Project Operations','building'],['maintenance','Maintenance Services','tool']]],
   ['Procurement & Logistics',[['procurement','Procurement','cart'],['inventory','Inventory','box']]],
-  ['Finance & Support',[['hr','HR & Employees','people'],['billing','Billing & Collections','wallet'],['reports','Reports','chart'],['mail','Email','mail'],['documents','Documents','folder'],['settings','Settings','settings']]],
+  ['Finance & Support',[['hr','HR & Employees','people'],['team-employees','Employees','people'],['billing','Billing & Collections','wallet'],['reports','Reports','chart'],['mail','Email','mail'],['documents','Documents','folder'],['settings','Settings','settings']]],
 ];
 const platformNav=[['Administration',[
   ['home','Admin dashboard','grid'],['platform-users','User management','people'],
@@ -33,11 +33,12 @@ const platformNav=[['Administration',[
 const navMap=Object.fromEntries([...platformNav,...nav].flatMap(([,entries])=>entries.map(([k,t,i])=>[k,{t,i}])));
 navMap.employees={t:'Settings / Employees',i:'people'};
 navMap.roles={t:'Settings / Roles',i:'settings'};
-const roleLabels={admin:'Platform Administrator',director:'Managing Director',manager:'Business Manager',mep:'Head of MEP',estimator:'Engineering & Estimation',project:'Project Manager',procurement:'Procurement',warehouse:'Stock Controller',maintenance:'Maintenance Supervisor',technician:'Maintenance Technician',finance:'Accounting & Finance Manager',adminSupport:'HR & Administration',auditor:'Read-Only Auditor',installation_lead:'Installation Lead',installation_technician:'Installation Technician',maintenance_lead:'Maintenance Team Leader',logistics:'Logistics'};
+const roleLabels={admin:'Platform Administrator',director:'Managing Director',manager:'Business Manager',mep:'Head of MEP',estimator:'Engineering & Estimation',project:'Project Manager',procurement:'Procurement',warehouse:'Stock Controller',maintenance:'Maintenance Supervisor',technician:'Maintenance Technician',finance:'Accounting & Finance Manager',hr_head:'HR Department Head',adminSupport:'HR & Administration',auditor:'Read-Only Auditor',installation_lead:'Installation Lead',installation_technician:'Installation Technician',maintenance_lead:'Maintenance Team Leader',logistics:'Logistics'};
+const demoRoleChoices=Object.entries(roleLabels).filter(([role])=>role!=='hr_head');
 const roleLabel=r=>roleLabels[r]??r;
 const kindView={mail:'mail',client:'clients',project:'projects',tender:'tenders',quote:'quotes',supplier:'procurement',request:'procurement',requisition:'procurement',po:'procurement',material:'inventory',movement:'inventory',count:'inventory',contract:'maintenance',agreement:'maintenance',dispatch:'documents',job:'maintenance',claim:'billing',invoice:'billing',document:'documents',personnel:'employees',task:'projects'};
 const kindLabels={mail:'Email',requisition:'Purchase requisition',client:'Client',project:'Project',tender:'Tender',quote:'Quotation',supplier:'Supplier',request:'Requisition',po:'Purchase order',material:'Material',movement:'Stock movement',count:'Stock count',contract:'Service contract',agreement:'Service agreement',dispatch:'Client email',job:'Service visit',claim:'Progress claim',invoice:'Invoice',document:'Attachment',variation:'Variation',milestone:'Billing milestone',payment:'Payment',requirement:'Material requirement',offer:'Supplier offer',employee:'Employee',progress:'Progress update',warehouse:'Warehouse',personnel:'Employee',task:'Project task'};
-const state={mailFolder:'inbox',mailbox:'',mailSelected:'',mailQuery:'',clientFilter:'all',view:'home',queue:'All items',data:null,role:storage.get('teams-demo-role')||'admin',picId:storage.get('teams-demo-pic')||'',planRole:'mep',mobile:false,error:null,previewId:'',service:'contracting',stage:0,unit:'engineering',employeeFilters:{search:'',department:'',role:'',review:''}};
+const state={mailFolder:'inbox',mailbox:'',mailSelected:'',mailQuery:'',clientFilter:'all',view:'home',queue:'All items',data:null,role:storage.get('teams-demo-role')||'admin',picId:storage.get('teams-demo-pic')||'',planRole:'mep',mobile:false,error:null,previewId:'',service:'contracting',stage:0,unit:'engineering',accountSearch:'',accountStatus:'current',employeeFilters:{search:'',department:'',role:'',review:''}};
 const permissions=()=>state.data?.permissions??['*'];
 const isPlatform=()=>state.data?.actor.platformAdmin===true;
 const isPrivate=()=>state.data?.privateWorkspace===true;
@@ -372,16 +373,21 @@ function settingsPage(){
     block('Company and approval thresholds','<div class="modal-body">'+details([['Company',s.name],['Reporting currency',s.currency],['Address',s.address],['Default tax',s.tax+'%'],['Minimum margin',s.minMargin+'%'],['Cash exposure limit',amount(s.cashLimit,s.currency)],['Delegated purchase limit',amount(s.purchaseLimit,s.currency)],['Price review interval',s.priceDays+' days'],['Inventory aging',s.agingDays+' days'],['Renewal alert',s.renewalDays+' days'],['KHR per USD',s.fxRate],['FX effective date',s.fxDate]])+'</div>')+
     emailConnectionPanel()+
     block('Warehouses',table(['Name','Code','Location'],rows('warehouse'),r=>[recordCell(r),e(r.code),e(r.location)]),fieldsButton('warehouse.create','Add warehouse',{small:true,icon:'plus'}))+
-    (isPrivate()?'':state.data.demoRoles.length?block('Fictional demonstration','<p class="empty">Reset records to the original fictional dataset. Existing demonstration edits will be removed.</p>',button('Reset demo','demo.reset',{small:true,danger:true})):block('Employee access',table(['Employee','Email','Roles','Access'],rows('employee'),r=>[recordCell(r),e(r.email),e(r.roles.map(roleLabel).join(', ')),status(r.active?'Active':'Closed')]),fieldsButton('employee.upsert','Assign employee access',{small:true,icon:'plus'})))+
+    (!isPrivate()&&state.data.demoRoles.length?block('Fictional demonstration','<p class="empty">Reset records to the original fictional dataset. Existing demonstration edits will be removed.</p>',button('Reset demo','demo.reset',{small:true,danger:true})):'')+
     block('Data imports',table(['Source file','Type','Rows','Cutoff'],sorted(rows('importLog')),r=>[recordCell(r),e(r.type),e(r.count),e(r.cutoff||'—')]),button('Import records','master.import',{small:true,icon:'upload'}))+
     block('Audit history','<p class="empty">Review timestamped changes and approval actions.</p>',button('Open audit log','audit',{small:true})+(hasFinanceAccess(state.data.actor)?button('Export data snapshot','backup',{small:true,icon:'download'}):'')));
 }
 const storageAmount=bytes=>qty(Number((bytes/1_000_000).toFixed(3)))+' MB';
 const storageCap=limit=>limit==null?'Unlimited':qty(limit)+' MB';
-const accountCanEdit=record=>!record?.bootstrapOwner&&(!record?.roles?.includes('admin')||state.data.actor.bootstrapOwner)&&
-  (!(record?.protectedAccess||record?.roles?.some(role=>['director','finance'].includes(role)))||hasRole('director'));
-const directorSetupButton=()=>state.data.platform.directorSetupAvailable?
-  button('Set up Managing Director','platform.director.initialize',{primary:true,icon:'people'}):'';
+const accountCanEdit=record=>canManageEmployee(state.data.actor,record);
+const accountStatus=record=>record.removedOn?'Removed':record.active?'Active':record.email?'Disabled':'Directory only';
+function employeeAccountActions(record){
+  if(record.bootstrapOwner)return e('Deployment owner');
+  if(record.removedOn)return accountCanEdit(record)?actionButton('employee.restore','Restore',record.id):'';
+  return (accountCanEdit(record)?actionButton('employee.upsert','Edit',record.id)+
+    actionButton('employee.remove','Remove',record.id):'')+
+    (isPlatform()&&record.email?actionButton('platform.storage.user','Set storage limit',record.id):'');
+}
 
 function platformDashboard(){
   const p=state.data.platform, users=rows('employee');
@@ -391,23 +397,34 @@ function platformDashboard(){
     ['Request failures (24 hours)',p.activity.counts.failures??'Unavailable','alert','platform-activity'],
     ['Slow requests (24 hours)',p.activity.counts.slow??'Unavailable','clock','platform-activity'],
   ];
-  return page('Admin dashboard','Manage TEAMS accounts, integrations and service activity.',directorSetupButton(),
+  return page('Admin dashboard','Manage TEAMS accounts, integrations and service activity.','',
     '<section class="kpis" aria-label="Platform indicators">'+indicators.map(([label,value,i,view])=>
       '<button class="kpi" type="button" data-view="'+A(view)+'"><span class="kpi-head">'+e(label)+'<span class="kpi-icon">'+icon(i,17)+'</span></span><strong>'+e(value)+'</strong></button>').join('')+'</section>'+
     block('Service status','<div class="modal-body">'+details([['Application database','Connected'],['Document storage',p.storageBound?'Connected':'Unavailable'],
       ['Email sending',p.emailConnection.mode==='configured'?'Configured':'Unavailable'],['Email receiving',p.emailConnection.receiving==='configured'?'Configured':'Unavailable'],
       ['AI review',p.ai.enabled?(p.aiKeySet&&p.ai.model?'Configured':'Credentials required'):'Disabled']])+'</div>'));
 }
-function platformUsers(){
-  const users=sorted(rows('employee'),'name',false),p=state.data.platform;
-  return page('User management','Assign access using each user\'s verified Cloudflare sign-in email.',
-    directorSetupButton()+button('Assign employee access','employee.upsert',{primary:true,icon:'plus'})+button('Import accounts','master.import',{icon:'upload'}),
-    block('User accounts',table(['Employee','Sign-in email','Roles','Access','Storage used','Limit','Actions'],users,user=>[
-      recordCell(user),e(user.email),e(user.roles.map(roleLabel).join(', ')),status(user.active?'Active':'Closed'),
-      e(storageAmount(user.storageUsedBytes)),e(storageCap(user.storageLimitMb??p.defaultStorageMb)),
-      user.bootstrapOwner?e('Deployment owner'):(accountCanEdit(user)?actionButton('employee.upsert','Edit access',user.id):'')+
-      actionButton('platform.storage.user','Set storage limit',user.id),
-    ])));
+function employeeAccountTable(){
+  const q=state.accountSearch.trim().toLowerCase(),p=state.data.platform;
+  const users=sorted(rows('employee'),'name',false).filter(user=>
+    (state.accountStatus==='all'||Boolean(user.removedOn)===(state.accountStatus==='removed'))&&
+    (!q||[user.name,user.employeeId,user.email,user.position,user.department,user.team,...user.roles.map(roleLabel)].some(value=>String(value??'').toLowerCase().includes(q))));
+  return table(['Employee','Job title','Department','Sign-in email','Roles','Access',...(p?['Storage used','Limit']:[]),'Actions'],users,user=>[
+    recordCell(user,[user.employeeId,user.team].filter(Boolean).join(' / ')),
+    '<span data-no-translate>'+e(user.position)+'</span>','<span data-no-translate>'+e(user.department)+'</span>',
+    e(user.email),e(user.roles.map(roleLabel).join(', ')),status(accountStatus(user)),
+    ...(p?[e(storageAmount(user.storageUsedBytes)),e(storageCap(user.storageLimitMb??p.defaultStorageMb))]:[]),employeeAccountActions(user),
+  ],'No matching employees.');
+}
+function employeeAccountsPage(){
+  const platform=isPlatform();
+  const options=[['current','Current accounts'],['removed','Removed accounts'],['all','All accounts']].map(([value,label])=>
+    '<option value="'+value+'"'+(state.accountStatus===value?' selected':'')+'>'+e(label)+'</option>').join('');
+  const filters='<div class="directory-filters"><label>Search employees<input type="search" id="account-search" class="filter" value="'+A(state.accountSearch)+'" placeholder="Name, ID, title, role or email"></label>'+
+    '<label>Account status<select id="account-status" class="filter">'+options+'</select></label></div>';
+  return page(platform?'User management':'Employees',platform?'Manage user accounts and assigned access.':'Manage job titles, teams and employee access.',
+    button(platform?'Add user':'Add employee','employee.upsert',{primary:true,icon:'plus'})+(platform?button('Import accounts','master.import',{icon:'upload'}):''),
+    block(platform?'User accounts':'Employee directory',filters+'<div id="account-grid">'+employeeAccountTable()+'</div>'));
 }
 function platformSettings(){
   const p=state.data.platform;
@@ -457,7 +474,7 @@ function planningEmployeesGrid(){
 }
 function planningEmployeesPage(){
   const f=state.employeeFilters;
-  const filters='<div class="directory-filters planning-filters"><label>Search names and positions<input type="search" class="filter" data-employee-filter="search" value="'+A(f.search)+'" placeholder="Name or official position"></label><label>Proposed profile<select class="filter" data-employee-filter="role"><option value="">All profiles</option>'+Object.entries(roleLabels).map(([role,label])=>'<option value="'+role+'"'+(f.role===role?' selected':'')+'>'+e(label)+'</option>').join('')+'</select></label></div>';
+  const filters='<div class="directory-filters planning-filters"><label>Search names and positions<input type="search" class="filter" data-employee-filter="search" value="'+A(f.search)+'" placeholder="Name or official position"></label><label>Proposed profile<select class="filter" data-employee-filter="role"><option value="">All profiles</option>'+demoRoleChoices.map(([role,label])=>'<option value="'+role+'"'+(f.role===role?' selected':'')+'>'+e(label)+'</option>').join('')+'</select></label></div>';
   return page('Employees for role planning','Named representatives for the TEAMS requirements discussion.',button('Load provided employee JSON','planning.import',{icon:'upload'})+button('Add person','planning.person',{primary:true,icon:'plus'}),settingsTabs()+planningNote()+
     block('People and proposed profiles',filters+'<div id="employee-grid">'+planningEmployeesGrid()+'</div>','<span class="muted">Load the source JSON to include all 69 people in this browser.</span>'));
 }
@@ -484,7 +501,7 @@ function planningRolePage(){
   if(state.data.publicDemo&&selected==='adminSupport')modules.push('hr');
   if(['estimator','mep','manager','director','project','procurement','auditor'].includes(selected))modules.unshift('materials');
   const actions=profileFunctions(selected);
-  const picker='<div class="planning-role-list" role="group" aria-label="Permission profiles">'+Object.entries(roleLabels).map(([role,label])=>{
+  const picker='<div class="planning-role-list" role="group" aria-label="Permission profiles">'+demoRoleChoices.map(([role,label])=>{
     const names=rolePeople(role).map(person=>person.name);
     return '<button type="button" class="planning-role" data-cmd="planning.role|'+role+'" aria-pressed="'+(selected===role)+'"><strong>'+e(label)+'</strong><span>'+e(names.join(', ')||'PIC to confirm')+'</span></button>';
   }).join('')+'</div>';
@@ -509,7 +526,7 @@ function planningPersonForm(id,createNew=false){
     const key=crypto.randomUUID();
     formModal({title:'Assign an existing person',sub:roleLabel(state.planRole),fields:[
       select('personId','Person from the employee list',planning().people.map(person=>[person.id,person.name+' / '+person.position]),'',{search:true}),
-      select('roles','Proposed permission profiles',Object.entries(roleLabels),[state.planRole],{multiple:true,full:true}),
+      select('roles','Proposed permission profiles',demoRoleChoices,[state.planRole],{multiple:true,full:true}),
       textarea('reason','Reason for assignment or change',''),
     ],content:button('Load the full provided list','planning.import',{small:true,icon:'upload'})+button('Add a new person','planning.new',{small:true,icon:'plus'}),
       submit:'Save proposed assignment',afterOpen:form=>form.elements.personId.addEventListener('change',()=>{
@@ -526,7 +543,7 @@ function planningPersonForm(id,createNew=false){
   const person=planningPerson(id),key=crypto.randomUUID();
   formModal({title:person?'Edit proposed role assignment':'Assign a person to roles',sub:'Keep the official position separate from proposed system profiles.',fields:[
     input('name','Official English name',person?.name||''),input('position','Official position',person?.position||''),
-    select('roles','Proposed permission profiles',Object.entries(roleLabels),person?.roles||[state.planRole],{multiple:true,required:false,full:true,help:'Hold Control or Command to select multiple profiles. Leave empty for no proposed access.'}),
+    select('roles','Proposed permission profiles',demoRoleChoices,person?.roles||[state.planRole],{multiple:true,required:false,full:true,help:'Hold Control or Command to select multiple profiles. Leave empty for no proposed access.'}),
     textarea('reason','Reason for assignment or change',''),
   ],notes:'These are demonstration proposals. Production access requires a separate authorized decision.',submit:'Save proposed assignment',onSubmit:values=>savePlanning('person.save',{id,...values},values.reason,key)});
 }
@@ -628,7 +645,7 @@ function hrEmployeeForm(id){
   ],submit:'Save employee',onSubmit:values=>savePlanning('employee.save',{...values,id},values.reason,key)});
 }
 const pages={mail:mailPage,home:()=>isPlatform()?platformDashboard():dashboard(),structure:structurePage,clients:clientsPage,tenders:tendersPage,materials:materialsPage,hr:hrPage,quotes:quotesPage,procurement:procurementPage,inventory:inventoryPage,projects:projectsPage,maintenance:maintenancePage,billing:billingPage,reports:reportsPage,documents:documentsPage,settings:settingsPage,employees:employeesPage,roles:rolesPage,
-  'platform-users':platformUsers,'platform-settings':platformSettings,'platform-activity':platformActivityPage};
+  'platform-users':employeeAccountsPage,'team-employees':employeeAccountsPage,'platform-settings':platformSettings,'platform-activity':platformActivityPage};
 function render(){
   if(isPlatform()&&state.view==='settings')state.view='platform-settings';
   if(state.data&&!show(state.view))state.view='home';
@@ -637,9 +654,9 @@ function render(){
 }
 
 function mobileNavigation(){
-  const preferred=hasRole('warehouse','logistics')?'inventory':hasRole('maintenance','maintenance_lead','technician')?'maintenance':show('projects')?'projects':show('quotes')?'quotes':'clients';
+  const preferred=show('team-employees')&&hasRole('hr_head')?'team-employees':hasRole('warehouse','logistics')?'inventory':hasRole('maintenance','maintenance_lead','technician')?'maintenance':show('projects')?'projects':show('quotes')?'quotes':'clients';
   const items=isPlatform()?[['home','Admin','grid'],['platform-users','Users','people'],['platform-settings','Settings','settings'],['platform-activity','Logs','clipboard']]:
-    [['home','Home','grid'],[preferred,'Work','clipboard'],[show('inventory')?'inventory':show('documents')?'documents':'roles',show('inventory')?'Stock':'Documents','box'],[show('mail')?'mail':show('procurement')?'procurement':'clients',show('mail')?'Email':show('procurement')?'Procurement':'Clients','mail']];
+    [['home','Home','grid'],[preferred,preferred==='team-employees'?'Employees':'Work','clipboard'],[show('inventory')?'inventory':show('documents')?'documents':'roles',show('inventory')?'Stock':'Documents','box'],[show('mail')?'mail':show('procurement')?'procurement':'clients',show('mail')?'Email':show('procurement')?'Procurement':'Clients','mail']];
   $('#mobile-nav').innerHTML=items.filter(([view],i,all)=>show(view)&&all.findIndex(x=>x[0]===view)===i).map(([view,label,i])=>'<button type="button" data-view="'+view+'"'+(state.view===view?' aria-current="page"':'')+'>'+icon(i,21)+'<span>'+e(label)+'</span></button>').join('')+'<button type="button" data-cmd="mobile" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">'+icon('menu',21)+'<span>More</span></button>';
   document.documentElement.dataset.view=state.view;
 }
@@ -857,9 +874,9 @@ function openRecord(id){
     case 'warehouse':
       body=add(['Location',r.location],['Warehouse',r.name],['Code',r.code]);break;
     case 'employee':
-      body=add(['Employee',r.name],['Email',r.email],['Roles',r.roles.map(roleLabel).join(', ')],['Active',r.active?'Yes':'No']);
-      actions=(accountCanEdit(r)?actionButton('employee.upsert','Edit access',r.id):'')+
-        (isPlatform()&&!r.bootstrapOwner?actionButton('platform.storage.user','Set storage limit',r.id):'');break;
+      body=add(['Employee',r.name],['Employee ID',r.employeeId],['Job title',r.position],['Department',r.department],['Team',r.team],
+        ['Job functions',r.jobFunctions],['Sign-in email',r.email],['Roles',r.roles.map(roleLabel).join(', ')],['Access',status(accountStatus(r)),true]);
+      actions=employeeAccountActions(r);break;
     default:body=add(['Date',formatDate(r.date,true)],['Status',r.status]);
   }
   openModal(rawName(r),[rawCode(r),kindLabels[r.kind]].filter(Boolean).join(' · '),body+historyPanel(r)+appendDocs(r),actions||button('Close','close',{small:true}),wide);
@@ -1469,15 +1486,24 @@ function formOperation(cmd,id,arg,extra){
         number('fxRate','KHR per USD, for reference',s.fxRate??'',optional),date('fxDate','Exchange rate effective date',s.fxDate||today(),optional)],{open:false});
     }
     case 'employee.upsert':{
-      if(!accountCanEdit(r))return;
-      const choices=Object.entries(roleLabels).filter(([role])=>role==='admin'?state.data.actor.bootstrapOwner:!['director','finance'].includes(role)||hasRole('director'));
-      return config('Employee access',[text('name','Employee name',r?.name),...(r?[]:[text('email','Sign-in email','',{type:'email'})]),
-        select('roles','Assigned roles',choices,r?.roles??[],{multiple:true,help:'Hold Control or Command to select multiple roles.'}),
-        input('active','Active access',r?.active??true,{type:'checkbox',required:false})],{open:false,sub:r?.email,values:r?{email:r.email}:undefined});
+      if(!accountCanEdit(r)||r?.removedOn)return;
+      const choices=employeeRoleChoices(state.data.actor).map(role=>[role,roleLabel(role)]);
+      return config(r?'Edit employee':isPlatform()?'Add user':'Add employee',[text('name','Employee name',r?.name),
+        text('employeeId','Employee ID',r?.employeeId,optional),
+        text('position','Job title',r?.position,optional),text('department','Department',r?.department,optional),text('team','Team',r?.team,optional),
+        text('email','Sign-in email',r?.email,{...optional,type:'email',help:'Required for active access.'}),
+        select('roles','Assigned roles',choices,r?.roles??[],{multiple:true,required:false,help:'Hold Control or Command to select multiple roles.'}),
+        input('active','Active access',r?.active??false,{type:'checkbox',required:false}),
+        textarea('jobFunctions','Job functions',r?.jobFunctions,optional),
+        textarea('reason','Change reason','',optional),
+      ],{open:false,values:{create:!r}});
     }
-    case 'platform.director.initialize':
-      return config('Set up Managing Director',[text('name','Employee name'),text('email','Sign-in email','',{type:'email'}),
-        textarea('reference','Authorization reference')],{open:false,submit:'Set up Managing Director',notes:'Use the approved Managing Director account and record the decision authorizing this one-time setup.'});
+    case 'employee.remove':case 'employee.restore':{
+      if(!r||!accountCanEdit(r))return;
+      const restoring=cmd==='employee.restore',label=restoring?'Restore employee':'Remove employee';
+      return config(label,[textarea('reason','Reason')],{sub:r.name,open:false,submit:label,
+        notes:restoring?'The restored record starts with sign-in disabled.':'Removing the employee disables sign-in and records the removal in the audit log.'});
+    }
     case 'platform.storage.default':case 'platform.storage.user':{
       const individual=cmd==='platform.storage.user';
       return config(individual?'Set storage limit':'Set default storage limit',[
@@ -1526,18 +1552,19 @@ const masterFields={
   material:{code:'Material code',name:'Description',category:'Category',unit:'Base unit',spec:'Specification',barcode:'Barcode',currency:'Currency',price:'Verified unit price',priceDate:'Price date',minimum:'Minimum',supplierName:'Supplier name'},
   project:{name:'Project name',clientName:'Client name',location:'Site location',service:'Service category',manager:'Project lead',contract:'Contract reference',start:'Start date',end:'Completion date',currency:'Currency',value:'Contract value',budget:'Approved budget',retention:'Retention',terms:'Payment terms'},
   contract:{name:'Contract title',clientName:'Client name',site:'Site address',equipment:'Covered equipment',supervisor:'Supervisor',technician:'Technician',technicianEmail:'Technician email',start:'Start date',end:'End date',billing:'Billing frequency',frequency:'Visit interval',currency:'Currency',value:'Contract value',sla:'Service levels',safety:'Safety instructions'},
-  employee:{name:'Employee name',email:'Email',roles:'Role keys separated by |'},
+  employee:{name:'Employee name',employeeId:'Employee ID',email:'Email',roles:'Roles',position:'Job title',department:'Department',team:'Team',jobFunctions:'Job functions'},
   opening:{materialCode:'Existing material code',warehouseCode:'Existing warehouse code',quantity:'Verified quantity',cost:'Verified unit cost'},
 };
 const masterRequired={client:['name'],supplier:['name'],material:['code','name','category','unit','currency','price','priceDate'],project:['name','clientName','location','service','manager','contract','start','end','currency','value','budget'],
-  contract:['name','clientName','site','equipment','supervisor','technician','start','end','billing','frequency','currency','value'],employee:['name','email','roles'],opening:['materialCode','warehouseCode','quantity','cost']};
+  contract:['name','clientName','site','equipment','supervisor','technician','start','end','billing','frequency','currency','value'],employee:['name'],opening:['materialCode','warehouseCode','quantity','cost']};
 function masterImportForm(){
   let sheets=[],entries=[];
   const label={client:'Clients',supplier:'Suppliers',material:'Materials',project:'Projects',contract:'Maintenance contracts',employee:'Employee access',opening:'Opening stock'};
   editOperation('master.import',{title:'Import records',sub:'Map columns, preview the rows, and confirm the batch.',wide:true,
     fields:[select('type','Record type',Object.entries(label).filter(([k])=>isPlatform()?k==='employee':k!=='employee'||(!state.data.demoRoles.length&&!isPrivate())),isPlatform()?'employee':'client'),
       input('file','Spreadsheet','',{type:'file',accept:'.csv,.tsv,.xlsx'}),date('cutoff','Verified opening stock cutoff',today(),optional)],
-    content:'<div id="master-import" style="margin-top:12px"></div>',submit:'Confirm import',notes:'Use YYYY-MM-DD dates and plain numeric values. Import up to 100 rows per batch.',
+    content:'<div id="master-import" style="margin-top:12px"></div>',submit:'Confirm import',
+    notes:isPlatform()?'Import up to 100 users at a time. Store employee IDs as text. Imported users start with sign-in disabled.':'Use YYYY-MM-DD dates and plain numeric values. Import up to 100 rows per batch.',
     transform:values=>{
       if(!entries.length)throw Error('Map every required field and review valid rows.');
       if(entries.length>100)throw Error('Split the source into files of up to 100 data rows.');
@@ -1558,7 +1585,7 @@ function masterImportForm(){
           const blanks=values.flatMap((row,i)=>required.some(k=>!row[k])?[i+2]:[]);
           const duplicates=[],seen=new Set();
           for(const [i,row] of values.entries()){
-            const signature=type==='opening'?row.materialCode+'|'+row.warehouseCode:row.code||row.email||row.name;
+            const signature=type==='opening'?row.materialCode+'|'+row.warehouseCode:type==='employee'?row.employeeId||row.email||row.name:row.code||row.email||row.name;
             if(signature){const key=signature.toLowerCase();if(seen.has(key))duplicates.push(i+2);seen.add(key);}
           }
           entries=missing.length||blanks.length||duplicates.length?[]:values;
@@ -1679,10 +1706,19 @@ document.addEventListener('input',event=>{
   }
   if(node.id==='mail-search'){state.mailQuery=node.value;$('#mail-list').innerHTML=mailList();}
   if(node.id==='hr-employee-search'){state.hrSearch=node.value;$('#hr-employee-grid').innerHTML=hrEmployeeGrid();}
+  if(node.id==='account-search'){
+    state.accountSearch=node.value;
+    $('#account-grid').innerHTML=employeeAccountTable();
+  }
   if(['inventory-filter','material-price-filter'].includes(node.id)){
     const q=node.value.trim().toLowerCase(),table=node.closest('section').querySelector('tbody');
     if(table)[...table.rows].forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));
   }
+});
+document.addEventListener('change',event=>{
+  if(event.target.id!=='account-status')return;
+  state.accountStatus=event.target.value;
+  $('#account-grid').innerHTML=employeeAccountTable();
 });
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&state.mobile){state.mobile=false;sidebar();}

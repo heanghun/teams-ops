@@ -71,7 +71,6 @@ test('First Managing Director setup is authorized once, auditable and safe under
   const data={name:'Approved director',email:director,reference:'Signed appointment reference'};
   assert.equal((await c.action('platform.director.initialize',data,secondAdmin)).status,403);
   assert.equal((await c.action('platform.director.initialize',{...data,email:owner})).status,422);
-  assert.equal((await c.action('employee.upsert',{...data,roles:['director']})).status,403);
   const a=await Promise.all([c.action('platform.director.initialize',data),c.action('platform.director.initialize',data)]);
   assert.deepEqual(a.map(response=>response.status).sort(),[200,409]);
   assert.equal((await c.state(owner)).platform.directorSetupAvailable,false);
@@ -85,6 +84,74 @@ test('First Managing Director setup is authorized once, auditable and safe under
   await c.add(finance,['finance'],director);
   assert.deepEqual((await c.state(finance)).actor.roles,['finance']);
   assert.equal((await c.action('employee.upsert',{name:'Separate account',email:'other@example.test',roles:['admin','manager']})).status,422);
+});
+
+test('Platform Administrators can create, edit, remove and restore a separate MD test account', async t => {
+  const c = platformTest(t);
+  await c.add(secondAdmin,['admin']);
+  await c.add(director,['director']);
+  const testEmail='md-test@example.test',newEmail='renamed-md-test@example.test';
+  const testUser=await c.saved('employee.upsert',{create:true,name:'Pilot account',email:testEmail,
+    roles:['director','estimator'],position:'Pilot Managing Director',active:true},secondAdmin);
+  const initial=await c.state(testEmail);
+  assert.deepEqual(initial.actor.roles,['director','estimator']);
+  assert.ok(initial.permissions.includes('billing'));
+  assert.ok(initial.permissions.includes('team-employees'));
+  const client=await c.saved('client.create',{name:'Pilot client'},testEmail);
+  assert.equal((await c.upload(client.id,867,testEmail)).status,200);
+  await c.saved('employee.upsert',{id:testUser.id,email:newEmail,reason:'Correct pilot email'},secondAdmin);
+  assert.equal((await c.call('/api/state',testEmail)).status,403);
+  assert.equal((await c.state(newEmail)).actor.id,initial.actor.id);
+  const account=await c.state(secondAdmin);
+  assert.equal(account.records.find(row=>row.id===testUser.id).storageUsedBytes,867);
+  assert.ok(!account.permissions.includes('billing'));
+  assert.equal((await c.action('employee.upsert',{name:'Another user',email:testEmail,roles:['director']})).status,409);
+  assert.equal((await c.action('employee.upsert',{name:'Owner',email:owner,roles:['director']},secondAdmin)).status,403);
+  await c.saved('employee.remove',{id:testUser.id,reason:'Pilot complete'},secondAdmin);
+  assert.equal((await c.call('/api/state',newEmail)).status,403);
+  assert.ok((await c.state(secondAdmin)).records.find(row=>row.id===testUser.id).removedOn);
+  await c.saved('employee.restore',{id:testUser.id,reason:'Repeat the test'},secondAdmin);
+  assert.equal((await c.call('/api/state',newEmail)).status,403);
+  await c.saved('employee.upsert',{id:testUser.id,active:true},secondAdmin);
+  assert.deepEqual((await c.state(newEmail)).actor.roles,initial.actor.roles);
+  const audit=c.DB.prepare('SELECT actor,action,summary FROM audit WHERE target=? ORDER BY version').bind(testUser.id).all().results;
+  assert.deepEqual(audit.map(row=>row.action),['employee.upsert','employee.upsert','employee.remove','employee.restore','employee.upsert']);
+  assert.ok(audit.every(row=>row.actor==='cloudflare-access:'+secondAdmin));
+  assert.equal(JSON.parse(audit[2].summary)[0].reason,'Pilot complete');
+});
+
+test('MD and HR department head manage the employee directory within their role limits',async t=>{
+  const c=platformTest(t);
+  const hr='hr@example.test';
+  const mdAccount=await c.add(director,['director']);
+  await c.add(hr,['hr_head'],director);
+  await c.add(finance,['finance'],director);
+  const importFile={type:'employee',source:'Pilot roster.csv',entries:[{name:'Pilot employee',employeeId:'00045',position:'Site technician',department:'Installation',team:'Team 2'}]};
+  await c.saved('master.import',importFile);
+  const hrState=await c.state(hr);
+  assert.deepEqual(hrState.permissions,['home','team-employees']);
+  const employee=hrState.records.find(row=>row.employeeId==='00045');
+  assert.equal(employee.active,false);
+  assert.equal(employee.email,'');
+  assert.equal(employee.position,'Site technician');
+  assert.deepEqual(employee.roles,[]);
+  await c.saved('employee.upsert',{id:employee.id,position:'Installation technician',jobFunctions:'Confirm installation checklist',roles:['installation_technician']},hr);
+  const updated=(await c.state(director)).records.find(row=>row.id===employee.id);
+  assert.equal(updated.employeeId,'00045');
+  assert.equal(updated.position,'Installation technician');
+  assert.equal(updated.team,'Team 2');
+  assert.equal(updated.jobFunctions,'Confirm installation checklist');
+  assert.deepEqual(updated.roles,['installation_technician']);
+  assert.equal((await c.action('employee.upsert',{name:'Duplicate ID',employeeId:'00045'},hr)).status,409);
+  for(const role of ['director','finance','admin','hr_head']){
+    assert.equal((await c.action('employee.upsert',{name:'Protected role',roles:[role]},hr)).status,403,role);
+  }
+  assert.equal((await c.action('employee.remove',{id:mdAccount.id,reason:'Unauthorized role change'},hr)).status,403);
+  assert.equal((await c.call('/api/backup',hr)).status,403);
+  assert.ok(!(await c.state(finance)).records.some(row=>row.kind==='employee'));
+  await c.saved('employee.remove',{id:employee.id,reason:'Directory correction'},hr);
+  await c.saved('employee.restore',{id:employee.id,reason:'Directory entry confirmed'},hr);
+  assert.equal((await c.state(hr)).records.find(row=>row.id===employee.id).active,false);
 });
 
 test('Storage limits apply to concurrent uploads, duplicate submissions and email attachment copies', async t => {

@@ -48,6 +48,7 @@ const operations = {
   finance: ['claim.create','claim.transition','invoice.create','invoice.pay','invoice.reverse','cash.update','document.attach'],
   adminSupport: ['client.create','document.attach'],
   auditor: [],
+  hr_head: ['employee.upsert','employee.remove','employee.restore'],
   admin: ['*'],
 };
 for(const role of ['estimator','mep','manager','director','project','procurement','maintenance','finance','adminSupport'])operations[role].push('mail.save','mail.send','mail.update');
@@ -70,8 +71,8 @@ export function approvalFor(action, status){
   if(action==='claim.transition'&&status==='Certified')return 'claim';
   return null;
 }
-const platformActions = ['employee.upsert','master.import','platform.director.initialize','platform.email.update','platform.ai.update','platform.storage.default','platform.storage.user'];
-const directorSettingsActions = ['settings.update','warehouse.create','master.import','stock.adjust'];
+const platformActions = ['employee.upsert','employee.remove','employee.restore','master.import','platform.director.initialize','platform.email.update','platform.ai.update','platform.storage.default','platform.storage.user'];
+const directorSettingsActions = ['settings.update','warehouse.create','master.import','stock.adjust','employee.remove','employee.restore'];
 export const actionAccess = actor => actor.platformAdmin ? platformActions : [...new Set([
   ...actor.roles.flatMap(role=>operations[role]??[]),
   ...(actor.demo===false&&actor.roles.includes('director')?directorSettingsActions:[]),
@@ -83,6 +84,17 @@ export function eligibleApprovals(assigned){
   });
 }
 const has = (actor, ...wanted) => wanted.some(role => actor.roles.includes(role));
+export function employeeRoleChoices(actor){
+  if(actor.platformAdmin)return roles;
+  if(has(actor,'director'))return roles.filter(role=>role!=='admin');
+  if(has(actor,'hr_head'))return roles.filter(role=>!['admin','director','finance','hr_head'].includes(role));
+  return [];
+}
+export function canManageEmployee(actor,employee){
+  const choices=employeeRoleChoices(actor);
+  return choices.length>0&&!employee?.bootstrapOwner&&(employee?.roles??[]).every(role=>choices.includes(role));
+}
+export const employeeMatchesEmail = (actor,email) => Boolean(email&&(actor.email===email||actor.formerSignInEmails?.includes(email)));
 export const allowed = (actor, action) => {
   if(financeAction(action)&&!hasFinanceAccess(actor))return false;
   const actions=actionAccess(actor);
@@ -104,12 +116,14 @@ export const modules = {
   logistics:['home','procurement'],
   finance:['home','clients','quotes','maintenance','projects','billing','reports','documents'],
   adminSupport:['home','clients','documents'], auditor:['home','clients','tenders','quotes','procurement','inventory','projects','maintenance','billing','reports','documents'],
+  hr_head:['home'],
 };
 for(const role of ['estimator','mep','manager','director','project','procurement','maintenance','finance','adminSupport','auditor'])modules[role].push('mail');
 export const viewAccess = actor => {
   if(actor.platformAdmin)return ['home','platform-users','platform-settings','platform-activity'];
   const access=[...new Set(actor.roles.flatMap(role => modules[role] ?? []))];
   if(actor.demo===false&&actor.roles.includes('director'))access.push('settings','inventory');
+  if(actor.demo===false&&has(actor,'director','hr_head'))access.push('team-employees');
   if(hasFinanceAccess(actor))return access;
   return (access.includes('*')?[...new Set(['settings',...Object.values(modules).flat()])]:access).filter(module=>!['*','billing','reports'].includes(module));
 };
@@ -789,7 +803,7 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
     case 'job.update': {
       const j=get(data.id,'job');
       if(actor.previewEmployeeId&&!hasFullModule(actor,'maintenance'))ensure(jobAssigned(rows,j,actor.previewEmployeeId),'This service visit is outside your assignment.',403);
-      if (!has(actor,'admin','maintenance')&&!demo) ensure(j.technicianEmail && j.technicianEmail===actor.email,'This service visit is assigned to another technician.',403);
+      if (!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,j.technicianEmail),'This service visit is assigned to another technician.',403);
       ensure(j.status!=='Completed','Completed service reports are locked.');
       const status=choose(data.status,['In Progress','Completed'],'service status'),selected=Array.isArray(data.completed)?data.completed:[];
       const completed=j.checklist.filter(x=>selected.includes(x)),minutes=optionalNumber(data.minutes,'Minutes worked',10000);
@@ -881,25 +895,52 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
       break;
     }
     case 'employee.upsert': {
-      ensure(!demo,'Employee access is configured in an empty team environment.');
-      const email=field(data.email,'Employee email').toLowerCase();
-      ensure(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'Enter a valid email address.');
-      const assigned=Array.isArray(data.roles)?data.roles:[data.roles];
-      ensure(assigned.length>0&&assigned.every(r=>roles.includes(r)),'Select valid employee roles.');
-      const prior=list('employee').find(x=>x.email===email);
-      if(data.id)ensure(prior?.id===data.id,'The employee sign-in email must match the selected account.',409);
-      if(assigned.includes('admin')||prior?.roles.includes('admin')){
-        ensure(actor.bootstrapOwner,'Only the configured platform owner can manage Platform Administrator accounts.',403);
-        ensure(!assigned.includes('admin')||assigned.every(role=>role==='admin'),'Use a separate account for Platform Administrator access.');
+      ensure(!demo,'Employee access is configured in the team environment.');
+      const employees=list('employee'),selected=data.id?get(data.id,'employee'):null;
+      const email=String(data.email??selected?.email??'').trim().toLowerCase();
+      ensure(!email||(email.length<=254&&/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(email)),'Enter a valid sign-in email.');
+      const prior=selected||(email?employees.find(x=>x.email===email):null);
+      ensure(!data.create||!prior,'This sign-in email is already registered.',409);
+      ensure(!prior?.removedOn,'Restore this employee before editing the account.',409);
+      ensure(canManageEmployee(actor,prior),'Your role cannot manage this employee account.',403);
+      ensure(!email||!employees.some(x=>x.id!==prior?.id&&(x.email===email||x.formerSignInEmails?.includes(email))),
+        'This sign-in email is assigned to another employee or their account history.',409);
+      const employeeId=String(data.employeeId??prior?.employeeId??'').trim();
+      ensure(employeeId.length<=100,'Enter an employee ID of up to 100 characters.');
+      ensure(!employeeId||!employees.some(x=>x.id!==prior?.id&&x.employeeId===employeeId),'This employee ID is already registered.',409);
+      const requested=data.roles??prior?.roles??[];
+      const assigned=[...new Set(Array.isArray(requested)?requested:[requested])];
+      ensure(assigned.every(role=>roles.includes(role)),'Select valid employee roles.');
+      ensure(assigned.every(role=>employeeRoleChoices(actor).includes(role)),'Your role cannot assign one or more selected permission profiles.',403);
+      ensure(!assigned.includes('admin')||assigned.length===1,'Use a separate account for Platform Administrator access.');
+      const active=data.active??prior?.active??Boolean(email);
+      ensure(typeof active==='boolean','Choose an access status.');
+      ensure(!active||(email&&assigned.length),'Active access requires a sign-in email and at least one role.');
+      ensureDirectorCoverage(actor,employees,prior,active,assigned);
+      const values={name:field(data.name??prior?.name,'Employee name'),email,roles:assigned,active,employeeId,
+        position:note(data.position??prior?.position,220),department:note(data.department??prior?.department,150),team:note(data.team??prior?.team,150),
+        jobFunctions:note(data.jobFunctions??prior?.jobFunctions),accessReason:note(data.reason,500)};
+      if(prior?.email&&prior.email!==email){
+        values.identityEmail=prior.identityEmail||prior.email;
+        values.formerSignInEmails=[...new Set([...(prior.formerSignInEmails??[]),prior.email])].filter(value=>value!==email);
       }
-      ensure(has(actor,'director')||JSON.stringify(assigned.filter(r=>['director','finance'].includes(r)).sort())===JSON.stringify((prior?.roles||[]).filter(r=>['director','finance'].includes(r)).sort()),'Only the Managing Director can grant, remove or modify protected financial access.',403);
-      ensure(!prior||has(actor,'director')||!prior.roles.some(r=>['director','finance'].includes(r)),'Only the Managing Director can edit accounts with financial access.',403);
-      if(prior?.active&&prior.roles.includes('director')&&(data.active===false||!assigned.includes('director'))){
-        ensure(list('employee').some(x=>x.id!==prior.id&&x.active&&x.roles.includes('director')&&!x.roles.includes('admin')),
-          'Activate another Managing Director before removing access for the last active one.',409);
-      }
-      const values={name:field(data.name,'Employee name'),email,roles:[...new Set(assigned)],active:data.active!==false};
       target=prior?update(prior,values):make('employee',values);break;
+    }
+    case 'employee.remove':
+    case 'employee.restore': {
+      ensure(!demo,'Employee access is configured in the team environment.');
+      const employee=get(data.id,'employee');
+      ensure(canManageEmployee(actor,employee),'Your role cannot manage this employee account.',403);
+      const reason=field(data.reason,'Reason',500);
+      if(action==='employee.remove'){
+        ensure(!employee.removedOn,'This employee has already been removed.',409);
+        ensureDirectorCoverage(actor,list('employee'),employee,false,employee.roles);
+        target=update(employee,{active:false,removedOn:today,accessReason:reason});
+      }else{
+        ensure(employee.removedOn,'Select a removed employee to restore.',409);
+        target=update(employee,{active:false,removedOn:null,accessReason:reason});
+      }
+      break;
     }
     case 'master.import': {
       const input=choose(data.type,['client','supplier','material','project','contract','employee','opening'],'import type');
@@ -938,7 +979,8 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
               }
             }
             if(input==='employee'){
-              ensure(!list('employee').some(x=>x.email===String(entry.email??'').trim().toLowerCase()),'This employee already exists. Edit access in Settings.');
+              values.create=true;
+              values.active=entry.active===true;
               values.roles=String(entry.roles??'').split(/[;,|]/).map(x=>x.trim()).filter(Boolean);
             }
             if(input==='material'&&entry.supplierName){
@@ -959,12 +1001,18 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
       const parent=byId.get(data.parentId);
       const byKind={client:'clients',project:'clients',tender:'tenders',quote:'quotes',request:'procurement',requisition:'procurement',po:'procurement',contract:'maintenance',agreement:'maintenance',mail:'mail',job:'maintenance',claim:'billing',invoice:'billing'};
       ensure(parent&&byKind[parent.kind]&&(viewAccess(actor).includes('*')||viewAccess(actor).includes(byKind[parent.kind])), 'Select an accessible document record.',403);
-      if(parent.kind==='job'&&!has(actor,'admin','maintenance')&&!demo) ensure(parent.technicianEmail===actor.email,'This service visit is assigned to another technician.',403);
+      if(parent.kind==='job'&&!has(actor,'admin','maintenance')&&!demo) ensure(employeeMatchesEmail(actor,parent.technicianEmail),'This service visit is assigned to another technician.',403);
       target=make('document',{name:field(data.name,'Filename'),parentId:parent.id,projectId:parent.kind==='project'?parent.id:parent.projectId,parentKind:parent.kind,key:data.key,size:data.size,type:data.type});break;
     }
     default: throw new DomainError('Unknown operation.',400);
   }
   return {target,changes:[...changes.values()]};
+}
+
+function ensureDirectorCoverage(actor,employees,prior,active,assigned){
+  if(actor.platformAdmin||!prior?.active||!prior.roles.includes('director')||(active&&assigned.includes('director')))return;
+  ensure(employees.some(x=>x.id!==prior.id&&x.active&&!x.removedOn&&x.roles.includes('director')&&!x.roles.includes('admin')),
+    'Activate another Managing Director before removing access for the last active one.',409);
 }
 
 export function reportData(rows,today=dateOffset()) {

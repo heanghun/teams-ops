@@ -38,6 +38,8 @@ The [TEAMS Operations source repository](https://github.com/heanghun/teams-ops) 
 6. In the Worker's runtime Variables and Secrets, set `TEAMS_ACCESS_AUD` and `TEAMS_OWNER_EMAIL`. The generated configuration retains dashboard variables on subsequent deployments. Access must supply the verified email through its Worker context. The app denies a wrong audience, missing identity or an alternate host. `workers.dev` and Workers version preview URLs are disabled.
 7. Confirm the protected custom domain and TLS. Use separate pilot accounts for administrator, estimator, field roles and Finance. Run the acceptance scenarios below, including access denial, persistence and attachment permissions.
 
+Add a dedicated Managing Director pilot account in **User management** using its approved Access email. The account has the MD's business permissions in the environment where it is activated. MD and HR Department Head manage staff records from **Employees** within their assigned role limits. Keep employee directory records without sign-in until the employee is ready to use TEAMS. Confirm available Access seats across the Cloudflare account before expanding the pilot.
+
 The repository includes the AI review code. Set `TEAMS_AI_ENABLED` to `true` only after the separate AI acceptance. Enter OpenAI and Resend credentials as runtime secrets, with real employee and operating data imported into the protected environment.
 
 ## Current delivery

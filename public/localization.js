@@ -19,6 +19,29 @@ Email sending|ការផ្ញើអ៊ីមែល
 Email receiving|ការទទួលអ៊ីមែល
 User accounts|គណនីអ្នកប្រើប្រាស់
 Import accounts|នាំចូលគណនី
+HR Department Head|ប្រធាននាយកដ្ឋានធនធានមនុស្ស
+Add user|បន្ថែមអ្នកប្រើប្រាស់
+Manage user accounts and assigned access.|គ្រប់គ្រងគណនីអ្នកប្រើប្រាស់ និងសិទ្ធិដែលបានផ្ដល់។
+Manage job titles, teams and employee access.|គ្រប់គ្រងមុខតំណែង ក្រុម និងសិទ្ធិចូលប្រព័ន្ធរបស់បុគ្គលិក។
+Job title|មុខតំណែង
+Access|សិទ្ធិចូលប្រព័ន្ធ
+Account status|ស្ថានភាពគណនី
+Current accounts|គណនីបច្ចុប្បន្ន
+Removed accounts|គណនីដែលបានដកចេញ
+All accounts|គណនីទាំងអស់
+Directory only|មានតែក្នុងបញ្ជីបុគ្គលិក
+Removed|បានដកចេញ
+Search employees|ស្វែងរកបុគ្គលិក
+Name, ID, title, role or email|ឈ្មោះ លេខសម្គាល់ មុខតំណែង តួនាទី ឬអ៊ីមែល
+No matching employees.|រកមិនឃើញបុគ្គលិកដែលត្រូវនឹងការស្វែងរក។
+Required for active access.|ត្រូវការអ៊ីមែលដើម្បីបើកសិទ្ធិចូលប្រព័ន្ធ។
+Active access|បើកសិទ្ធិចូលប្រព័ន្ធ
+Change reason|មូលហេតុនៃការកែប្រែ
+Remove employee|ដកបុគ្គលិកចេញ
+Restore employee|ស្ដារកំណត់ត្រាបុគ្គលិក
+The restored record starts with sign-in disabled.|កំណត់ត្រាដែលបានស្ដារឡើងវិញនៅតែបិទសិទ្ធិចូលប្រព័ន្ធ។
+Removing the employee disables sign-in and records the removal in the audit log.|ការដកបុគ្គលិកចេញនឹងបិទសិទ្ធិចូលប្រព័ន្ធ ហើយកត់ត្រាក្នុងកំណត់ហេតុសវនកម្ម។
+Import up to 100 users at a time. Store employee IDs as text. Imported users start with sign-in disabled.|នាំចូលអ្នកប្រើប្រាស់បានដល់ ១០០ នាក់ក្នុងមួយលើក។ រក្សាលេខសម្គាល់បុគ្គលិកជាអត្ថបទ។ អ្នកប្រើប្រាស់ដែលបាននាំចូលមានសិទ្ធិចូលប្រព័ន្ធបិទជាលំនាំដើម។
 Deployment owner|ម្ចាស់ប្រព័ន្ធ
 Configure platform connections and upload limits.|កំណត់ការតភ្ជាប់ប្រព័ន្ធ និងដែនកំណត់ការផ្ទុកឯកសារ។
 Email (Resend)|អ៊ីមែល (Resend)

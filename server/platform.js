@@ -1,4 +1,4 @@
-import { DomainError } from './domain.js';
+import { DomainError, applyOperation } from './domain.js';
 import { mailboxRouting, mailConnection } from './mail-service.js';
 
 const platformSettingsId = 'platform-settings';
@@ -52,10 +52,9 @@ export function applyPlatformOperation(rows, actor, action, data, today) {
       const authorizationReference = platformText(data.reference, 'Authorization reference', 500, true);
       const prior = rows.find(row => row.kind === 'employee' && row.email === email);
       if (prior?.roles.includes('admin')) throw new DomainError('Use a separate account for the Managing Director.', 403);
-      const target = {
-        ...(prior ?? {id:crypto.randomUUID(), kind:'employee', date:today, createdBy:actor.id}),
-        name, email, roles:[...new Set([...(prior?.roles ?? []), 'director'])], active:true, authorizationReference, updated:today,
-      };
+      const {target:account} = applyOperation(rows,actor,'employee.upsert',
+        {name,email,roles:[...new Set([...(prior?.roles ?? []),'director'])],active:true},false,today);
+      const target = {...account,authorizationReference};
       return {target, changes:[target, {...settings, directorInitialized:true, updated:today}]};
     }
     case 'platform.storage.default':
@@ -159,7 +158,8 @@ export async function recordPlatformIssue(db, request, status, durationMs) {
 async function platformActivity(db) {
   const minute = Math.floor(Date.now() / 60000);
   const {results:audit} = await db.prepare(`SELECT action, actor, created_at,
-    CASE WHEN action='platform.director.initialize' THEN json_extract(summary,'$[0].reason') END AS authorization_reference
+    CASE WHEN action IN ('platform.director.initialize','employee.upsert','employee.remove','employee.restore')
+      THEN json_extract(summary,'$[0].reason') END AS authorization_reference
     FROM audit ORDER BY version DESC LIMIT 100`).all();
   try {
     const {results:issues} = await db.prepare(`SELECT actor, area, status, last_seen, max_ms, hits, slow_hits
@@ -182,8 +182,9 @@ export async function platformState(state, actor, env, permissions, actions) {
   const ownerEmail = env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
   const accounts = state.rows.filter(row => row.kind === 'employee' && row.email !== ownerEmail).map(row => ({
     id:row.id, kind:row.kind, name:row.name, email:row.email, roles:row.roles.includes('admin') ? ['admin'] : row.roles,
-    active:row.active, storageLimitMb:row.storageLimitMb ?? null, storageUsedBytes:usage.get('cloudflare-access:'+row.email) ?? 0,
-    protectedAccess:row.roles.some(role=>role === 'director' || role === 'finance'),
+    active:row.active, employeeId:row.employeeId, position:row.position, department:row.department, team:row.team,
+    jobFunctions:row.jobFunctions, removedOn:row.removedOn,
+    storageLimitMb:row.storageLimitMb ?? null, storageUsedBytes:usage.get('cloudflare-access:'+(row.identityEmail||row.email)) ?? 0,
   }));
   accounts.unshift({id:'platform-owner',kind:'employee',name:'Platform owner',email:ownerEmail,roles:['admin'],active:true,bootstrapOwner:true,
     storageUsedBytes:usage.get('cloudflare-access:'+ownerEmail) ?? 0,storageLimitMb:null});

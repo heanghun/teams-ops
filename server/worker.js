@@ -70,12 +70,14 @@ function getActor(request,env,state,demo) {
     return {id:'demo:'+id+':'+role,email,roles:[role],demo:true};
   }
   const owner=env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
-  const employee=state.rows.find(r=>r.kind==='employee'&&r.email===email);
+  const employee=email&&state.rows.find(r=>r.kind==='employee'&&r.email===email);
   if(owner && email===owner)return {id,email,name:employee?.name||'Platform owner',roles:['admin'],demo:false,platformAdmin:true,bootstrapOwner:true};
   if(employee){
-    if(!employee.active)throw new DomainError('Your TEAMS access is disabled.',403);
-    if(employee.roles.includes('admin'))return {id,email,name:employee.name,roles:['admin'],demo:false,platformAdmin:true};
-    return {id,email,roles:employee.roles,name:employee.name,demo:false};
+    if(!employee.active||employee.removedOn)throw new DomainError('Your TEAMS access is disabled.',403);
+    const principal=employee.identityEmail&&id.startsWith('cloudflare-access:')?'cloudflare-access:'+employee.identityEmail:id;
+    const identity={id:principal,email,name:employee.name,formerSignInEmails:employee.formerSignInEmails??[],demo:false};
+    if(employee.roles.includes('admin'))return {...identity,roles:['admin'],platformAdmin:true};
+    return {...identity,roles:employee.roles};
   }
   throw new DomainError('Your account does not have TEAMS access.',403);
 }
@@ -89,8 +91,11 @@ async function mutate(db,env,request,action,data,key,demo) {
       return {id:prior.target,replayed:true};
     }
     const owner=env.TEAMS_OWNER_EMAIL?.trim().toLowerCase();
-    const memberships=action==='employee.upsert'?[data]:action==='master.import'&&data.type==='employee'&&Array.isArray(data.entries)?data.entries:[];
-    if(!demo&&memberships.some(entry=>String(entry?.email??'').trim().toLowerCase()===owner))throw new DomainError('The platform owner is managed in the deployment configuration.',403);
+    const memberships=['employee.upsert','employee.remove','employee.restore'].includes(action)?[data]:
+      action==='master.import'&&data.type==='employee'&&Array.isArray(data.entries)?data.entries:[];
+    const ownerAccount=owner&&state.rows.find(row=>row.kind==='employee'&&row.email===owner);
+    if(!demo&&owner&&memberships.some(entry=>String(entry?.email??'').trim().toLowerCase()===owner||
+      (ownerAccount&&entry?.id===ownerAccount.id)))throw new DomainError('The platform owner is managed in the deployment configuration.',403);
     if(!demo&&action==='document.attach')checkUserStorage(state.rows,actor,data.size);
     if(!demo&&action==='mail.send')checkUserStorage(state.rows,actor,(data.frozenFiles??[]).reduce((total,file)=>total+file.size,0));
     let outcome;
@@ -103,7 +108,8 @@ async function mutate(db,env,request,action,data,key,demo) {
     const now=new Date().toISOString();
     const history=reset?[]:outcome.changes.map(row=>{
       const previous=state.rows.find(x=>x.id===row.id),fields=Object.keys(row).filter(k=>k!=='key'&&JSON.stringify(row[k])!==JSON.stringify(previous?.[k]));
-      return {id:row.id,kind:row.kind,fields,reason:(action==='platform.director.initialize'&&row.authorizationReference)||row.personnelReason||row.assignmentReason||row.approvalReason||row.reason||row.closeReason||row.reference||row.revisionReason||null,
+      return {id:row.id,kind:row.kind,fields,reason:(action==='platform.director.initialize'&&row.authorizationReference)||
+        (row.kind==='employee'&&row.accessReason)||row.personnelReason||row.assignmentReason||row.approvalReason||row.reason||row.closeReason||row.reference||row.revisionReason||null,
         before:previous?Object.fromEntries(fields.map(k=>[k,previous[k]??null])):null,after:Object.fromEntries(fields.map(k=>[k,row[k]??null]))};
     });
     const batch=[auditStmt(db,key,state.version+1,actor,action,outcome.target,history,now),...(reset?[db.prepare('DELETE FROM records')]:[]),writeRows(db,outcome.changes,now)];

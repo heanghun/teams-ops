@@ -2,7 +2,7 @@ import { createInvoicePdf } from './invoice-document.js';
 import { hasFinanceAccess, financialRecord } from './finance.js';
 import { mailboxAccess } from './mail-model.js';
 import { createLetterheadPdf } from './letterhead.js';
-import { DomainError, roles, hasNamedAssignments, approvalLabels, eligibleApprovals, actionAccess, allowed, hasFullModule, projectAssigned, jobAssigned, viewAccess, reportData, bidAssessment, quotationTotals, availableStock, projectPosition, invoiceBalance } from './domain.js';
+import { DomainError, roles, hasNamedAssignments, approvalLabels, eligibleApprovals, actionAccess, allowed, hasFullModule, projectAssigned, jobAssigned, viewAccess, reportData, bidAssessment, quotationTotals, availableStock, projectPosition, invoiceBalance, employeeMatchesEmail } from './domain.js';
 import { createPdf, createXlsx, createClientXlsx, documentContent } from './documents.js';
 
 export const protection = {
@@ -17,17 +17,18 @@ const typeMap={client:'clients',project:'clients',tender:'tenders',quote:'quotes
   contract:'maintenance',agreement:'maintenance',dispatch:'documents',job:'maintenance',document:'documents',employee:'settings',importLog:'settings',task:'projects'};
 const canView=(actor,module)=>viewAccess(actor).some(v=>v==='*'||v===module);
 const isFinancial=hasFinanceAccess;
-export const demoRoles=['admin',...roles.filter(x=>x!=='admin')];
+export const demoRoles=['admin',...roles.filter(x=>!['admin','hr_head'].includes(x))];
 export const attachmentTypes = new Set(['application/pdf','text/plain','text/csv','image/jpeg','image/png','image/webp','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/zip','application/x-zip-compressed','application/vnd.ms-excel','application/msword','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/vnd.dwg','application/acad','application/x-dwg','application/dwg','image/vnd.dxf','application/dxf','application/x-dxf','image/gif','application/rtf','application/octet-stream']);
 
 function ownedJob(row, actor) {
-  return row.kind!=='job'||actor.demo||!actor.roles.includes('technician')||actor.roles.some(x=>x==='admin'||x==='maintenance'||x==='auditor')||row.technicianEmail===actor.email;
+  return row.kind!=='job'||actor.demo||!actor.roles.includes('technician')||actor.roles.some(x=>x==='admin'||x==='maintenance'||x==='auditor')||employeeMatchesEmail(actor,row.technicianEmail);
 }
 export function visible(row,actor,rows){
   if(!row)return false;
   if(actor.platformAdmin)return row.kind==='employee';
   if(row.kind==='platformSettings')return false;
+  if(row.kind==='employee'&&actor.demo===false)return canView(actor,'team-employees')&&!row.roles.includes('admin');
   if(!hasFinanceAccess(actor)&&financialRecord(row,rows))return false;
   if(row.kind==='mail')return mailboxAccess(actor).includes(row.mailbox);
   if(row.kind==='personnel')return actor.personnelAdmin===true;
@@ -61,6 +62,10 @@ export function visible(row,actor,rows){
   return canView(actor,typeMap[row.kind])&&ownedJob(row,actor);
 }
 function mask(row,actor,rows){
+  if(row.kind==='employee'&&actor.demo===false){
+    const {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn}=row;
+    return {id,kind,name,email,roles,active,employeeId,position,department,team,jobFunctions,removedOn};
+  }
   const data={...row};
   if(!hasFinanceAccess(actor)){
     if(row.kind==='settings')for(const key of ['cashOpening','cashInputs','invoiceProfile'])delete data[key];
