@@ -2,7 +2,7 @@ import { hasFinanceAccess, financeAuditAllowed, invoiceAccountingExport } from '
 import { mailboxAccess } from '../server/mail-model.js';
 import { dateOffset, initialRecords } from '../server/seed.js';
 import { DomainError, allowed, applyOperation, limitedRoles, agreementDefaults } from '../server/domain.js';
-import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, requestKey, statePayload, visible } from '../server/presentation.js';
+import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, requestKey, statePayload, visible, isPersonalDocument, canViewDocumentAudit } from '../server/presentation.js';
 import { rolePlanning, applyPlanning, sourceRepresentatives } from './role-planning.js';
 import { simulationBoq, tenderEstimate } from '../server/tender-estimating.js';
 
@@ -225,7 +225,7 @@ export function createDemoTransport(store=openDemoStore(),origin=location.origin
       }
       if(url.pathname==='/api/action'&&method==='POST'){
         const body=JSON.parse(options.body);
-        requireDemo(!['document.attach','dispatch.create','mail.send'].includes(body.action),'Use the file attachment form.',400);
+        requireDemo(!['document.attach','document.store','dispatch.create','mail.send'].includes(body.action),'Use the file attachment form.',400);
         return json(await store.update(state=>mutate(state,actor,body.action,body.data??{},requestKey(body.key))));
       }
       if(url.pathname==='/api/send-email')return json({error:'Use the Email workspace. Scans are no longer required.'},400);
@@ -241,8 +241,9 @@ export function createDemoTransport(store=openDemoStore(),origin=location.origin
         }));
       }
       if(url.pathname==='/api/upload'&&method==='POST'){
-        const form=options.body,file=form.get('file'),parentId=String(form.get('parentId')??'');
-        requireDemo(allowed(actor,'document.attach'),'Your role cannot attach documents.');
+        const form=options.body,file=form.get('file'),folderId=String(form.get('folderId')??'');
+        const parentId=folderId||String(form.get('parentId')??''),action=folderId?'document.store':'document.attach';
+        requireDemo(allowed(actor,action),'Your role cannot upload to that destination.');
         requireDemo(file instanceof Blob&&file.size>0&&file.size<=10000000,'Choose a file up to 10 MB.',400);
         const type=file.type||'application/octet-stream';
         requireDemo(attachmentTypes.has(type),'Choose a PDF, image, Office document or text file.',415);
@@ -251,10 +252,11 @@ export function createDemoTransport(store=openDemoStore(),origin=location.origin
         const data={name:file.name,parentId,key:crypto.randomUUID(),size:file.size,type,purpose};
         return json(await store.update(state=>{
           addDemoScenarios(state);
-          requireDemo(visible(state.rows.find(record=>record.id===parentId),actor,state.rows),'Select an accessible record.');
+          const parent=state.rows.find(record=>record.id===parentId);
+          requireDemo(visible(parent,actor,state.rows)&&Boolean(folderId)===(parent.kind==='folder'),'Select an accessible folder or record.');
           const total=Object.values(state.files).reduce((sum,blob)=>sum+blob.size,0);
           requireDemo(total+file.size<=30000000,'This browser demo can store up to 30 MB of attachments.',413);
-          return mutate(state,actor,'document.attach',data,requestKey(form.get('key')),file);
+          return mutate(state,actor,action,data,requestKey(form.get('key')),file);
         }));
       }
       requireDemo(method==='GET','Method not allowed.',405);
@@ -273,7 +275,7 @@ export function createDemoTransport(store=openDemoStore(),origin=location.origin
       if(url.pathname==='/api/export')return exportResponse(state,actor,true,url);
       if(url.pathname==='/api/audit'){
         requireDemo(['admin','auditor','director','finance'].includes(role),'Audit history requires authorized access.');
-        return json(state.audit.filter(event=>financeAuditAllowed(event,actor,state.rows)).slice(-100).reverse());
+        return json(state.audit.filter(event=>financeAuditAllowed(event,actor,state.rows)&&canViewDocumentAudit(event,actor)).slice(-100).reverse());
       }
       if(url.pathname==='/api/invoice-accounting-export'){
         requireDemo(hasFinanceAccess(actor),'Financial export is restricted.');
@@ -281,8 +283,9 @@ export function createDemoTransport(store=openDemoStore(),origin=location.origin
       }
       if(url.pathname==='/api/backup'){
         requireDemo(hasFinanceAccess(actor),'Full snapshots contain financial data and are restricted to MD and Finance Manager.');
-        const records=state.rows.map(record=>{const {key,...rest}=record;return rest;});
-        return new Response(JSON.stringify({format:1,mode:'fictional',version:state.version,records,audit:state.audit}),
+        const records=state.rows.filter(row=>!isPersonalDocument(row)||visible(row,actor,state.rows)).map(record=>{const {key,...rest}=record;return rest;});
+        const audit=state.audit.filter(event=>canViewDocumentAudit(event,actor));
+        return new Response(JSON.stringify({format:1,mode:'fictional',version:state.version,records,audit}),
           {headers:downloadHeaders('teams-operations-demo.json','application/json')});
       }
       if(url.pathname.startsWith('/api/file/')){

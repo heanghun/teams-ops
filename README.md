@@ -78,6 +78,10 @@ The MD and HR Department Head use **Employees** to manage official titles, emplo
 
 Cloudflare Access and TEAMS must both authorize a live sign-in. Directory-only records do not occupy Cloudflare seats. Manage Cloudflare Access policy, sessions and seat removal in the Cloudflare dashboard when offboarding a tester.
 
+Under **Settings > Import records**, select the record type and download its Excel template. Fill in the Data worksheet using the column rules and examples on Instructions. Keep IDs, codes and dates as text. The importer suggests a header row and lets you change it in existing workbooks. It validates and commits the batch as one operation.
+
+In **Documents > My folders**, a user with write access to Documents can create folders and upload or download files up to 10 MB each, subject to their storage quota. Folder files are accessible through that account. **Record attachments** follow the permissions of the linked operational record.
+
 Admin settings controls Resend sender/routing, whether sending and receiving are enabled, OpenAI review and usage limits, and the default upload quota. Set an individual override in User management. Quotas measure stored documents and frozen outbound email attachment copies. Existing files remain available when an account reaches its quota. Configure provider credentials in Cloudflare Worker Secrets. Apply `drizzle/0002_platform_activity.sql` for seven-day diagnostics of failed and slow requests. The activity view also shows recent audit actions with timestamps and actors.
 
 ## Backup and recovery

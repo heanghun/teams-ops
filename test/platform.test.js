@@ -189,6 +189,49 @@ test('Storage limits apply to concurrent uploads, duplicate submissions and emai
   assert.equal((await c.call('/api/file/'+document,estimator)).status,200);
 });
 
+test('personal Documents folders enforce ownership across uploads, downloads and snapshots',async t=>{
+  const c=platformTest(t);
+  await c.add(director,['director']);
+  await c.add(finance,['finance']);
+  const auditor='auditor@example.test';
+  await c.add(auditor,['auditor']);
+  const root=await c.saved('folder.create',{name:'Private drafts'},director);
+  const child=await c.saved('folder.create',{name:'Site notes',parentId:root.id},director);
+  assert.equal((await c.action('folder.create',{name:'Private drafts'},director)).status,409);
+  assert.equal((await c.action('folder.create',{name:'Other draft',parentId:root.id},finance)).status,404);
+  assert.equal((await c.action('folder.create',{name:'Read-only user'},auditor)).status,403);
+  assert.equal((await c.action('folder.create',{name:'Deployment owner'})).status,403);
+
+  const upload=(email,key)=>{
+    const form=new FormData();
+    form.set('folderId',child.id);
+    form.set('key',key);
+    form.set('file',new Blob(['Pilot private file'],{type:'text/plain'}),'private-notes.txt');
+    return c.call('/api/upload',email,form);
+  };
+  const uploadKey=crypto.randomUUID(),response=await upload(director,uploadKey);
+  assert.equal(response.status,200,await response.clone().text());
+  const {id}=await response.json();
+  assert.equal((await(await upload(director,uploadKey)).json()).replayed,true);
+  assert.equal((await upload(finance,crypto.randomUUID())).status,403);
+  assert.equal(c.files.size,1);
+  assert.equal((await c.action('document.store',{parentId:child.id,name:'File without an upload'},director)).status,400);
+  const download=await c.call('/api/file/'+id,director);
+  assert.equal(await download.text(),'Pilot private file');
+  assert.match(download.headers.get('Content-Disposition'),/private-notes\.txt/);
+  assert.equal((await c.call('/api/file/'+id,finance)).status,404);
+  assert.equal((await c.call('/api/file/'+id,owner)).status,403);
+  const document=(await c.state(director)).records.find(row=>row.id===id);
+  assert.equal(document.parentId,child.id);
+  assert.equal(document.key,undefined);
+  assert.ok(!(await c.state(finance)).records.some(row=>row.id===id||row.id===root.id));
+  assert.doesNotMatch(await(await c.call('/api/backup',finance)).text(),/Private drafts|private-notes\.txt/);
+  assert.ok(!(await(await c.call('/api/audit',finance)).json()).some(event=>event.target===id||event.target===child.id));
+  await c.saved('platform.storage.default',{limitMb:0});
+  assert.equal((await upload(director,crypto.randomUUID())).status,413);
+  assert.equal((await c.call('/api/file/'+id,director)).status,200);
+});
+
 test('Platform integration settings validate and take effect without exposing provider secrets', async t => {
   const c=platformTest(t,{TEAMS_OPENAI_API_KEY:'mock-ai-secret',TEAMS_RESEND_API_KEY:'mock-resend-secret',TEAMS_RESEND_WEBHOOK_SECRET:'mock-webhook-secret'});
   await c.add(estimator,['estimator']);

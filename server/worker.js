@@ -6,7 +6,7 @@ import { initialRecords } from './seed.js';
 import { DomainError, applyOperation, allowed, actionAccess, viewAccess } from './domain.js';
 import { tenderEstimate } from './tender-estimating.js';
 import { aiReviewAvailable, reviewWithAi } from './ai-review.js';
-import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, protection, requestKey, statePayload, visible } from './presentation.js';
+import { attachmentTypes, demoRoles, downloadHeaders, exportResponse, json, protection, requestKey, statePayload, visible, isPersonalDocument, canViewDocumentAudit } from './presentation.js';
 import { applyPlatformOperation, checkUserStorage, platformRuntimeEnv, platformState, recordPlatformIssue } from './platform.js';
 
 async function loadRows(db) {
@@ -96,7 +96,7 @@ async function mutate(db,env,request,action,data,key,demo) {
     const ownerAccount=owner&&state.rows.find(row=>row.kind==='employee'&&row.email===owner);
     if(!demo&&owner&&memberships.some(entry=>String(entry?.email??'').trim().toLowerCase()===owner||
       (ownerAccount&&entry?.id===ownerAccount.id)))throw new DomainError('The platform owner is managed in the deployment configuration.',403);
-    if(!demo&&action==='document.attach')checkUserStorage(state.rows,actor,data.size);
+    if(!demo&&['document.attach','document.store'].includes(action))checkUserStorage(state.rows,actor,data.size);
     if(!demo&&action==='mail.send')checkUserStorage(state.rows,actor,(data.frozenFiles??[]).reduce((total,file)=>total+file.size,0));
     let outcome;
     const reset=action==='demo.reset';
@@ -210,7 +210,7 @@ async function route(request,env){
     let input;
     try{input=JSON.parse(raw);}catch{throw new DomainError('Invalid request body.',400);}
     if(['dispatch.create','mail.send'].includes(input?.action))throw new DomainError('Use the email dispatch endpoint.',400);
-    if(input?.action==='document.attach')throw new DomainError('Use the file upload endpoint.',400);
+    if(['document.attach','document.store'].includes(input?.action))throw new DomainError('Use the file upload endpoint.',400);
     return json(await mutate(db,env,request,input?.action,input?.data??{},requestKey(input?.key),demo));
   }
   if(path==='/api/send-email')throw new DomainError('Use the Email workspace to compose messages. Scans are no longer required.',400);
@@ -222,34 +222,38 @@ async function route(request,env){
   if(path==='/api/backup'&&request.method==='GET'){
     if(!hasFinanceAccess(actor))throw new DomainError('Full snapshots contain financial data and are restricted to MD and Finance Manager.',403);
     const {results}=await db.prepare('SELECT * FROM audit WHERE version<=? ORDER BY version').bind(state.version).all();
-    const records=state.rows.filter(row=>row.kind!=='platformSettings'&&(row.kind!=='personnel'||actor.personnelAdmin)).map(row=>{
+    const records=state.rows.filter(row=>row.kind!=='platformSettings'&&(row.kind!=='personnel'||actor.personnelAdmin)&&
+      (!isPersonalDocument(row)||visible(row,actor,state.rows))).map(row=>{
       if(row.kind!=='document')return row;
       const {key,...metadata}=row;
       return metadata;
     });
     return new Response(JSON.stringify({format:1,mode:demo?'fictional':'team',version:state.version,exportedAt:new Date().toISOString(),records,
-      audit:results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.')))}),{
+      audit:results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.'))&&canViewDocumentAudit(row,actor))}),{
       headers:downloadHeaders('teams-operations-snapshot.json','application/json; charset=utf-8'),
     });
   }
   if(path==='/api/audit'&&request.method==='GET'){
     if(!actor.roles.some(r=>['admin','auditor','director','finance'].includes(r)))throw new DomainError('Audit history requires authorized access.',403);
     const {results}=await db.prepare('SELECT action,actor,target,created_at,version FROM audit ORDER BY version DESC LIMIT 100').all();
-    return json(results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.'))&&financeAuditAllowed(row,actor,state.rows)));
+    return json(results.filter(row=>!row.action.startsWith('platform.')&&(actor.personnelAdmin||!row.action.startsWith('personnel.'))&&
+      financeAuditAllowed(row,actor,state.rows)&&canViewDocumentAudit(row,actor)));
   }
   if(path==='/api/upload'&&request.method==='POST'){
-    if(!allowed(actor,'document.attach'))throw new DomainError('Your role cannot attach documents.',403);
+    if(!allowed(actor,'document.attach')&&!allowed(actor,'document.store'))throw new DomainError('Your role cannot upload documents.',403);
     if(!env.BUCKET)throw new DomainError('Document storage is unavailable.',503);
     const length=Number(request.headers.get('Content-Length'));
     if(length>12000000)throw new DomainError('Maximum attachment size is 10 MB.',413);
-    const form=await request.formData(),file=form.get('file'),parentId=String(form.get('parentId')??'');
+    const form=await request.formData(),file=form.get('file'),folderId=String(form.get('folderId')??'');
+    const parentId=folderId||String(form.get('parentId')??''),action=folderId?'document.store':'document.attach';
+    if(!allowed(actor,action))throw new DomainError('Your role cannot upload to that destination.',403);
     if(!file||typeof file==='string'||file.size===0||file.size>10000000)throw new DomainError('Choose a file up to 10 MB.',400);
     if(!attachmentTypes.has(file.type||'application/octet-stream'))throw new DomainError('Upload a PDF, image, Office workbook/document or text file.',415);
     const parent=state.rows.find(x=>x.id===parentId);
-    if(!visible(parent,actor,state.rows))throw new DomainError('Select an accessible record.',403);
+    if(!visible(parent,actor,state.rows)||Boolean(folderId)!==(parent.kind==='folder'))throw new DomainError('Select an accessible folder or record.',403);
     const key=requestKey(form.get('key'));
     const previous=await db.prepare('SELECT actor,action,target FROM audit WHERE request_id=?').bind(key).first();
-    if(previous?.actor===actor.id&&previous.action==='document.attach'&&previous.target)return json({id:previous.target,replayed:true});
+    if(previous?.actor===actor.id&&previous.action===action&&previous.target)return json({id:previous.target,replayed:true});
     if(!demo)checkUserStorage(state.rows,actor,file.size);
     const storageKey=(demo?'fictional/':'team/')+crypto.randomUUID();
     const purpose=String(form.get('purpose')||'');
@@ -257,7 +261,7 @@ async function route(request,env){
     const data={name:file.name,parentId,key:storageKey,size:file.size,type:file.type||'application/octet-stream',purpose};
     await env.BUCKET.put(storageKey,file.stream());
     try{
-      const result=await mutate(db,env,request,'document.attach',data,key,demo);
+      const result=await mutate(db,env,request,action,data,key,demo);
       if(result.replayed)await env.BUCKET.delete(storageKey);
       return json(result);
     }catch(error){await env.BUCKET.delete(storageKey).catch(()=>{});throw error;}

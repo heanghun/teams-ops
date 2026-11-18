@@ -76,6 +76,7 @@ const directorSettingsActions = ['settings.update','warehouse.create','master.im
 export const actionAccess = actor => actor.platformAdmin ? platformActions : [...new Set([
   ...actor.roles.flatMap(role=>operations[role]??[]),
   ...(actor.demo===false&&actor.roles.includes('director')?directorSettingsActions:[]),
+  ...(actor.roles.some(role=>role!=='auditor'&&modules[role]?.includes('documents'))?['folder.create','document.store']:[]),
 ])];
 export function eligibleApprovals(assigned){
   return Object.keys(approvalLabels).filter(key=>{
@@ -252,6 +253,10 @@ export function projectPosition(rows, project) {
 
 export function applyOperation(rows, actor, action, data, demo, today = dateOffset()) {
   ensure(allowed(actor,action), 'Your role cannot perform this action.',403);
+  return applyAuthorizedOperation(rows,actor,action,data,demo,today);
+}
+
+function applyAuthorizedOperation(rows,actor,action,data,demo,today) {
   if(action.startsWith('mail.'))return applyMailbox(rows,actor,action,data,demo);
   const approval=approvalFor(action,data.status);
   if(actor.previewEmployeeId&&approval)ensure(actor.approvals?.includes(approval),'This employee has no separate authorization for this decision.',403);
@@ -988,13 +993,30 @@ export function applyOperation(rows, actor, action, data, demo, today = dateOffs
               ensure(supplier,'Match the name of an existing supplier.');
               values.supplierId=supplier.id;
             }
-            const outcome=applyOperation([...byId.values()],actor,actions[input],values,demo,today);
+            // The outer import permission authorizes these validated batch writes.
+            const outcome=applyAuthorizedOperation([...byId.values()],actor,actions[input],values,demo,today);
             outcome.changes.forEach(write);
           }
         }catch(error){if(!(error instanceof DomainError))throw error;errors.push('Row '+(index+1)+': '+error.message);}
       }
       ensure(!errors.length,errors.slice(0,12).join(' ')+(errors.length>12?' '+(errors.length-12)+' more errors.':''));
       target=make('importLog',{name:source,type:input,count:data.entries.length,cutoff});
+      break;
+    }
+    case 'folder.create': {
+      const parentId=data.parentId?String(data.parentId):null;
+      if(parentId)ensure(get(parentId,'folder').createdBy===actor.id,'Select a folder in My folders.',404);
+      const name=field(data.name,'Folder name',120);
+      ensure(name!=='.'&&name!=='..'&&!/[\\/\\\\\u0000-\u001f]/.test(name),'Enter a folder name without slashes or control characters.');
+      ensure(!list('folder').some(folder=>folder.createdBy===actor.id&&folder.parentId===parentId&&folder.name.toLowerCase()===name.toLowerCase()),
+        'A folder with that name already exists here.',409);
+      target=make('folder',{name,parentId});
+      break;
+    }
+    case 'document.store': {
+      const folder=get(data.parentId,'folder');
+      ensure(folder.createdBy===actor.id,'Select a folder in My folders.',404);
+      target=make('document',{name:field(data.name,'Filename'),parentId:folder.id,parentKind:'folder',key:data.key,size:data.size,type:data.type});
       break;
     }
     case 'document.attach': {

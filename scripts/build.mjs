@@ -3,7 +3,7 @@ import { embedBrowserStartup, versionBrowserAssets } from './browser-assets.mjs'
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 
-const files = ['index.html', 'app.js', 'actions.js', 'demo.js', 'role-planning.js', 'role-session.js', 'style.css', 'localization.js', 'pwa.js', 'manifest.webmanifest', 'offline.html', 'deployment-guide.html', 'assets/Noto-font-license.txt', 'assets/fontkit-license.txt', 'operating-model.js', 'boq.js', 'icons.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs'];
+const files = ['index.html', 'app.js', 'actions.js', 'demo.js', 'role-planning.js', 'role-session.js', 'style.css', 'localization.js', 'pwa.js', 'manifest.webmanifest', 'offline.html', 'deployment-guide.html', 'assets/Noto-font-license.txt', 'assets/fontkit-license.txt', 'operating-model.js', 'boq.js', 'master-import.js', 'icons.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs'];
 let assets = Object.fromEntries(await Promise.all(files.map(async name => [
   name === 'index.html' ? '/' : '/' + name, await readFile('public/' + name, 'utf8'),
 ])));

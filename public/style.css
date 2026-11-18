@@ -20,6 +20,11 @@ dialog{position:fixed;width:min(760px,calc(100vw - 26px));max-height:calc(100dvh
 .directory-filters label{display:grid;gap:5px;font-size:12px;font-weight:650;color:var(--muted)}
 .directory-filters label:first-child{flex:1 1 220px}
 .directory-filters .filter{width:100%;max-width:none}
+.document-path{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:14px 16px;color:var(--muted)}
+.document-path [aria-current]{overflow-wrap:anywhere;font-weight:650;color:var(--ink)}
+.import-template{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0;padding:12px;border:1px solid var(--border);border-radius:8px}
+.import-template p{flex:1 1 220px;font-size:.9rem;color:var(--muted)}
+#master-map,#master-preview{margin-top:12px}
 .directory-count{padding:5px 16px 12px;color:var(--muted);font-size:13px}
 @media(max-width:640px){.directory-filters{display:grid;grid-template-columns:1fr 1fr}.directory-filters label:first-child{grid-column:1/-1}}
 

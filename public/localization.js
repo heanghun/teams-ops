@@ -5,6 +5,25 @@ Admin dashboard|ផ្ទាំងគ្រប់គ្រងប្រព័ន�
 User management|ការគ្រប់គ្រងអ្នកប្រើប្រាស់
 Admin settings|ការកំណត់ប្រព័ន្ធ
 Activity logs|កំណត់ហេតុសកម្មភាព
+My folders|ថតឯកសាររបស់ខ្ញុំ
+Folder path|ទីតាំងថតឯកសារ
+Folder|ថតឯកសារ
+Folder name|ឈ្មោះថតឯកសារ
+New folder|ថតឯកសារថ្មី
+Create folder|បង្កើតថតឯកសារ
+Folder created.|បានបង្កើតថតឯកសារ។
+You have no folders yet.|អ្នកមិនទាន់មានថតឯកសារទេ។
+This folder is empty.|ថតនេះគ្មានឯកសារទេ។
+Store files in private folders and find attachments linked to operational records.|រក្សាទុកឯកសារក្នុងថតផ្ទាល់ខ្លួន និងស្វែងរកឯកសារភ្ជាប់នឹងកំណត់ត្រាប្រតិបត្តិការ។
+Attach to record|ភ្ជាប់ទៅកំណត់ត្រា
+Maximum 10 MB per file. This folder is private to your account.|ឯកសារមួយអាចមានទំហំរហូតដល់ ១០ MB។ ថតនេះសម្រាប់តែគណនីរបស់អ្នក។
+File uploaded.|បានផ្ទុកឯកសារឡើង។
+Download Excel template|ទាញយកគំរូ Excel
+Enter records on the Data tab. The Instructions tab has examples, required columns, and formats.|បញ្ចូលទិន្នន័យនៅសន្លឹក Data។ សន្លឹក Instructions មានគំរូ ជួរឈរដែលត្រូវបំពេញ និងទម្រង់។
+Worksheet|សន្លឹកការងារ
+Header row|ជួរដេកចំណងជើង
+Map each spreadsheet column to one field.|ផ្គូផ្គងជួរឈរនីមួយៗទៅនឹងវាលតែមួយ។
+Enter data below the header row and upload the file again.|បញ្ចូលទិន្នន័យនៅក្រោមជួរដេកចំណងជើង រួចផ្ទុកឯកសារឡើងម្ដងទៀត។
 Manage TEAMS accounts, integrations and service activity.|គ្រប់គ្រងគណនី TEAMS ការតភ្ជាប់ និងសកម្មភាពសេវាកម្ម។
 Set up Managing Director|កំណត់គណនីអគ្គនាយក
 Authorization reference|ឯកសារយោងការអនុញ្ញាត

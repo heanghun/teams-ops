@@ -17,6 +17,8 @@ const typeMap={client:'clients',project:'clients',tender:'tenders',quote:'quotes
   contract:'maintenance',agreement:'maintenance',dispatch:'documents',job:'maintenance',document:'documents',employee:'settings',importLog:'settings',task:'projects'};
 const canView=(actor,module)=>viewAccess(actor).some(v=>v==='*'||v===module);
 const isFinancial=hasFinanceAccess;
+export const isPersonalDocument=row=>row.kind==='folder'||(row.kind==='document'&&row.parentKind==='folder');
+export const canViewDocumentAudit=(event,actor)=>!['folder.create','document.store'].includes(event.action)||event.actor===actor.id;
 export const demoRoles=['admin',...roles.filter(x=>!['admin','hr_head'].includes(x))];
 export const attachmentTypes = new Set(['application/pdf','text/plain','text/csv','image/jpeg','image/png','image/webp','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/zip','application/x-zip-compressed','application/vnd.ms-excel','application/msword','application/vnd.openxmlformats-officedocument.presentationml.presentation','image/vnd.dwg','application/acad','application/x-dwg','application/dwg','image/vnd.dxf','application/dxf','application/x-dxf','image/gif','application/rtf','application/octet-stream']);
@@ -27,6 +29,7 @@ function ownedJob(row, actor) {
 export function visible(row,actor,rows){
   if(!row)return false;
   if(actor.platformAdmin)return row.kind==='employee';
+  if(isPersonalDocument(row))return row.createdBy===actor.id&&canView(actor,'documents');
   if(row.kind==='platformSettings')return false;
   if(row.kind==='employee'&&actor.demo===false)return canView(actor,'team-employees')&&!row.roles.includes('admin');
   if(!hasFinanceAccess(actor)&&financialRecord(row,rows))return false;

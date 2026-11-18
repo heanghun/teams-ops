@@ -67,21 +67,49 @@ function zipStored(files) {
   let at=0;for(const chunk of [...local,...central,end]){output.set(chunk,at);at+=chunk.length;}
   return output;
 }
-export function createXlsx(rows) {
+export function createXlsx(rows,{guide}={}) {
   const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const relationship='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const packageRel='http://schemas.openxmlformats.org/package/2006/relationships';
-  const rowData=rows.map((row,i)=>'<row r="'+(i+1)+'">'+row.map((v,col)=>{
-    const ref=String.fromCharCode(65+col)+(i+1);
-    return typeof v==='number'?'<c r="'+ref+'"><v>'+v+'</v></c>':'<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xml(v)+'</t></is></c>';
-  }).join('')+'</row>').join('');
-  return zipStored({
-    '[Content_Types].xml':'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+  const sheets=guide?[{name:'Data',rows},{name:'Instructions',rows:guide}]:[{name:'TEAMS Operations',rows}];
+  const files={
     '_rels/.rels':'<Relationships xmlns="'+packageRel+'"><Relationship Id="rId1" Type="'+relationship+'/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-    'xl/workbook.xml':'<workbook xmlns="'+ns+'" xmlns:r="'+relationship+'"><sheets><sheet name="TEAMS Operations" sheetId="1" r:id="rId1"/></sheets></workbook>',
-    'xl/_rels/workbook.xml.rels':'<Relationships xmlns="'+packageRel+'"><Relationship Id="rId1" Type="'+relationship+'/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
-    'xl/worksheets/sheet1.xml':'<worksheet xmlns="'+ns+'"><sheetData>'+rowData+'</sheetData></worksheet>',
-  });
+    'xl/workbook.xml':'<workbook xmlns="'+ns+'" xmlns:r="'+relationship+'"><sheets>'+sheets.map(({name},i)=>
+      '<sheet name="'+xml(name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>',
+  };
+  const contentTypes=['<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'];
+  const relationships=[];
+  for(const [index,sheet] of sheets.entries()){
+    const sheetPath='worksheets/sheet'+(index+1)+'.xml';
+    const rowData=sheet.rows.map((row,i)=>'<row r="'+(i+1)+'">'+row.map((value,column)=>{
+      const ref=String.fromCharCode(65+column)+(i+1);
+      const style=guide&&i===0?' s="2"':'';
+      return typeof value==='number'?'<c r="'+ref+'"'+style+'><v>'+value+'</v></c>':
+        '<c r="'+ref+'"'+style+' t="inlineStr"><is><t xml:space="preserve">'+xml(value)+'</t></is></c>';
+    }).join('')+'</row>').join('');
+    let layout='';
+    if(guide){
+      const widths=index===0?rows[0].map(label=>Math.max(17,label.length+4)):[30,16,32,95];
+      layout='<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'+
+        '<cols>'+widths.map((width,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+width+'" customWidth="1"'+(index===0?' style="1"':'')+'/>').join('')+'</cols>';
+    }
+    files['xl/'+sheetPath]='<worksheet xmlns="'+ns+'">'+layout+'<sheetData>'+rowData+'</sheetData></worksheet>';
+    contentTypes.push('<Override PartName="/xl/'+sheetPath+'" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>');
+    relationships.push('<Relationship Id="rId'+(index+1)+'" Type="'+relationship+'/worksheet" Target="'+sheetPath+'"/>');
+  }
+  if(guide){
+    files['xl/styles.xml']='<styleSheet xmlns="'+ns+'"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'+
+      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF9D05A"/><bgColor indexed="64"/></patternFill></fill></fills>'+
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+      '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>'+
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    contentTypes.push('<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>');
+    relationships.push('<Relationship Id="rId3" Type="'+relationship+'/styles" Target="styles.xml"/>');
+  }
+  files['xl/_rels/workbook.xml.rels']='<Relationships xmlns="'+packageRel+'">'+relationships.join('')+'</Relationships>';
+  files['[Content_Types].xml']='<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/>'+contentTypes.join('')+'</Types>';
+  return zipStored(files);
 }
 export function documentContent(rows, kind, id, demo, internal) {
   const setting=rows.find(x=>x.kind==='settings'), get=key=>rows.find(x=>x.id===key);

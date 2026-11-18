@@ -10,6 +10,7 @@ import { planningPriorities, planningStatuses } from './role-planning.js';
 import {icon} from './icons.js';
 import {decisionRights,operatingUnits,serviceWorkflows} from './operating-model.js';
 import {readBoq,propose,mapBoq,fields as boqFields,pdfText} from './boq.js';
+import { masterImports, masterImportTemplate, mapMasterHeaders, guessMasterHeader } from './master-import.js';
 
 initLocalization();
 initPwa();
@@ -36,9 +37,9 @@ navMap.roles={t:'Settings / Roles',i:'settings'};
 const roleLabels={admin:'Platform Administrator',director:'Managing Director',manager:'Business Manager',mep:'Head of MEP',estimator:'Engineering & Estimation',project:'Project Manager',procurement:'Procurement',warehouse:'Stock Controller',maintenance:'Maintenance Supervisor',technician:'Maintenance Technician',finance:'Accounting & Finance Manager',hr_head:'HR Department Head',adminSupport:'HR & Administration',auditor:'Read-Only Auditor',installation_lead:'Installation Lead',installation_technician:'Installation Technician',maintenance_lead:'Maintenance Team Leader',logistics:'Logistics'};
 const demoRoleChoices=Object.entries(roleLabels).filter(([role])=>role!=='hr_head');
 const roleLabel=r=>roleLabels[r]??r;
-const kindView={mail:'mail',client:'clients',project:'projects',tender:'tenders',quote:'quotes',supplier:'procurement',request:'procurement',requisition:'procurement',po:'procurement',material:'inventory',movement:'inventory',count:'inventory',contract:'maintenance',agreement:'maintenance',dispatch:'documents',job:'maintenance',claim:'billing',invoice:'billing',document:'documents',personnel:'employees',task:'projects'};
+const kindView={mail:'mail',client:'clients',project:'projects',tender:'tenders',quote:'quotes',supplier:'procurement',request:'procurement',requisition:'procurement',po:'procurement',material:'inventory',movement:'inventory',count:'inventory',contract:'maintenance',agreement:'maintenance',dispatch:'documents',job:'maintenance',claim:'billing',invoice:'billing',folder:'documents',document:'documents',personnel:'employees',task:'projects'};
 const kindLabels={mail:'Email',requisition:'Purchase requisition',client:'Client',project:'Project',tender:'Tender',quote:'Quotation',supplier:'Supplier',request:'Requisition',po:'Purchase order',material:'Material',movement:'Stock movement',count:'Stock count',contract:'Service contract',agreement:'Service agreement',dispatch:'Client email',job:'Service visit',claim:'Progress claim',invoice:'Invoice',document:'Attachment',variation:'Variation',milestone:'Billing milestone',payment:'Payment',requirement:'Material requirement',offer:'Supplier offer',employee:'Employee',progress:'Progress update',warehouse:'Warehouse',personnel:'Employee',task:'Project task'};
-const state={mailFolder:'inbox',mailbox:'',mailSelected:'',mailQuery:'',clientFilter:'all',view:'home',queue:'All items',data:null,role:storage.get('teams-demo-role')||'admin',picId:storage.get('teams-demo-pic')||'',planRole:'mep',mobile:false,error:null,previewId:'',service:'contracting',stage:0,unit:'engineering',accountSearch:'',accountStatus:'current',employeeFilters:{search:'',department:'',role:'',review:''}};
+const state={mailFolder:'inbox',mailbox:'',mailSelected:'',mailQuery:'',clientFilter:'all',view:'home',queue:'All items',data:null,role:storage.get('teams-demo-role')||'admin',picId:storage.get('teams-demo-pic')||'',planRole:'mep',mobile:false,error:null,previewId:'',service:'contracting',stage:0,unit:'engineering',accountSearch:'',accountStatus:'current',documentFolder:'',employeeFilters:{search:'',department:'',role:'',review:''}};
 const permissions=()=>state.data?.permissions??['*'];
 const isPlatform=()=>state.data?.actor.platformAdmin===true;
 const isPrivate=()=>state.data?.privateWorkspace===true;
@@ -360,9 +361,36 @@ function reportsPage(){
     block('13-week cash forecast','<p class="muted" style="padding:11px 15px">Projected collections and commitments use record due dates. An opening cash entry dated today enables the running balance.</p>'+
       table(['Week starting','~Collections','~PO commitments','~Other in','~Other out','~Net movement','~Projected cash'],r.weeks,w=>[e(formatDate(w.start)),num(amount(w.collections,r.currency)),num(amount(w.procurement,r.currency)),num(amount(w.otherIn,r.currency)),num(amount(w.otherOut,r.currency)),num(amount(w.net,r.currency)),num(amount(w.balance,r.currency))]),fieldsButton('cash.update','Add forecast input',{small:true,icon:'plus'})));
 }
-function documentsPage(){return page('Documents','Find evidence and attachments linked to operational records.',fieldsButton('document.attach','Upload document',{primary:true,icon:'upload'}),
-  emailConnectionPanel()+block('Client email history',table(['Subject','Document','To','Status','Created'],sorted(rows('dispatch')),r=>[recordCell(r),name(r.parentId),e(r.to),status(r.status),e(formatDate(r.date))]))+
-  block('Record attachments',table(['Document','Linked record','Type','Size','Added'],sorted(rows('document')),r=>[recordCell(r),name(r.parentId),e(r.type),e(Math.ceil(r.size/1024)+' KB'),e(formatDate(r.date))])));}
+const downloadDocument=id=>button('Download',id,{attr:'file',small:true,icon:'download'});
+function openDocumentFolder(id=''){
+  if(!show('documents')||(id&&rec(id)?.kind!=='folder')||(modal.open&&!closeModal()))return;
+  state.documentFolder=id;
+  navigate('documents');
+}
+function documentsPage(){
+  const folder=rec(state.documentFolder),folderId=folder?.kind==='folder'?folder.id:null;
+  const path=[];
+  for(let current=folder;current?.kind==='folder';current=rec(current.parentId))path.unshift(current);
+  const breadcrumbs='<nav class="document-path" aria-label="Folder path">'+button('My folders','folder.open',{small:true,icon:'folder'})+
+    path.map((entry,i)=>icon('right',14)+(i===path.length-1?
+      '<span aria-current="location" data-no-translate>'+e(entry.name)+'</span>':
+      '<span data-no-translate>'+button(entry.name,'folder.open|'+entry.id,{small:true})+'</span>')).join('')+'</nav>';
+  const folders=sorted(rows('folder').filter(row=>row.parentId===folderId),'name',false);
+  const documents=sorted(rows('document'));
+  const files=folderId?documents.filter(row=>row.parentKind==='folder'&&row.parentId===folderId):[];
+  const personal=block('My folders',breadcrumbs+
+    table(['Name','Type','Size','Added',''],[...folders,...files],row=>row.kind==='folder'?
+      [recordCell(row),'Folder','',e(formatDate(row.date)),'']:
+      [recordCell(row),'File',e(Math.ceil(row.size/1024)+' KB'),e(formatDate(row.date)),downloadDocument(row.id)],
+    folderId?'This folder is empty.':'You have no folders yet.'),
+    actionButton('folder.create','New folder',folderId,{icon:'plus'})+
+    (folderId?actionButton('document.store','Upload file',folderId,{primary:true,icon:'upload'}):''));
+  return page('Documents','Store files in private folders and find attachments linked to operational records.','',personal+
+    block('Record attachments',table(['Document','Linked record','Type','Size','Added',''],documents.filter(row=>row.parentKind!=='folder'),
+      r=>[recordCell(r),name(r.parentId),e(r.type),e(Math.ceil(r.size/1024)+' KB'),e(formatDate(r.date)),downloadDocument(r.id)]),
+    fieldsButton('document.attach','Attach to record',{small:true,icon:'upload'}))+
+    emailConnectionPanel()+block('Client email history',table(['Subject','Document','To','Status','Created'],sorted(rows('dispatch')),r=>[recordCell(r),name(r.parentId),e(r.to),status(r.status),e(formatDate(r.date))])));
+}
 function settingsPage(){
   const s=settings();
   return page('Settings','Configure company details, thresholds, warehouses and access.',fieldsButton('settings.update','Edit settings',{primary:true}),
@@ -702,6 +730,7 @@ function transitionButtons(r,action){
 function openRecord(id){
   const r=rec(id);if(!r)return;
   if(r.kind==='mail'){mailOpen(id);return;}
+  if(r.kind==='folder'){openDocumentFolder(id);return;}
   let body='',actions='',wide=false;
   const cur=r.currency,f=v=>amount(v,cur);
   const add=(...args)=>details(args);
@@ -867,7 +896,7 @@ function openRecord(id){
     case 'cost':
       body=add(['Cost type',r.type],['Amount',f(r.amount)],['Date',formatDate(r.date,true)]);break;
     case 'document':
-      body=add(['Filename',r.name],['Linked record',rec(r.parentId)?openLink(rawName(rec(r.parentId)),r.parentId):'',true],['File type',r.type],['Size',Math.ceil(r.size/1024)+' KB']);
+      body=add(['Filename',r.name],[r.parentKind==='folder'?'Folder':'Linked record',rec(r.parentId)?openLink(rawName(rec(r.parentId)),r.parentId):'',true],['File type',r.type],['Size',Math.ceil(r.size/1024)+' KB']);
       actions=button('Download attachment',r.id,{attr:'file',icon:'download',small:true});break;
     case 'importLog':
       body=add(['Source file',r.name],['Import type',r.type],['Rows committed',r.count],['Verified cutoff',r.cutoff],['Imported',formatDate(r.date,true)]);break;
@@ -1542,82 +1571,125 @@ function formOperation(cmd,id,arg,extra){
       return masterImportForm();
     case 'demo.reset':
       return config('Reset fictional demonstration',[text('confirm','Type RESET to confirm')],{notes:'This removes edits from the demonstration workspace.',open:false,submit:'Reset demo',success:'Fictional workspace restored.'});
-    case 'document.attach':
-      return documentForm(id);
+    case 'folder.create':
+      return config('New folder',[text('name','Folder name')],{sub:r?.kind==='folder'?r.name:'My folders',open:false,
+        submit:'Create folder',values:{parentId:id||null},success:'Folder created.'});
+    case 'document.attach':case 'document.store':
+      return documentForm(id,cmd==='document.store');
   }
 }
-const masterFields={
-  client:{name:'Company name',type:'Customer type',contact:'Primary contact',phone:'Phone',email:'Email',address:'Billing address',taxId:'Tax ID',notes:'Notes'},
-  supplier:{name:'Supplier name',email:'Email',phone:'Phone',terms:'Payment terms'},
-  material:{code:'Material code',name:'Description',category:'Category',unit:'Base unit',spec:'Specification',barcode:'Barcode',currency:'Currency',price:'Verified unit price',priceDate:'Price date',minimum:'Minimum',supplierName:'Supplier name'},
-  project:{name:'Project name',clientName:'Client name',location:'Site location',service:'Service category',manager:'Project lead',contract:'Contract reference',start:'Start date',end:'Completion date',currency:'Currency',value:'Contract value',budget:'Approved budget',retention:'Retention',terms:'Payment terms'},
-  contract:{name:'Contract title',clientName:'Client name',site:'Site address',equipment:'Covered equipment',supervisor:'Supervisor',technician:'Technician',technicianEmail:'Technician email',start:'Start date',end:'End date',billing:'Billing frequency',frequency:'Visit interval',currency:'Currency',value:'Contract value',sla:'Service levels',safety:'Safety instructions'},
-  employee:{name:'Employee name',employeeId:'Employee ID',email:'Email',roles:'Roles',position:'Job title',department:'Department',team:'Team',jobFunctions:'Job functions'},
-  opening:{materialCode:'Existing material code',warehouseCode:'Existing warehouse code',quantity:'Verified quantity',cost:'Verified unit cost'},
-};
-const masterRequired={client:['name'],supplier:['name'],material:['code','name','category','unit','currency','price','priceDate'],project:['name','clientName','location','service','manager','contract','start','end','currency','value','budget'],
-  contract:['name','clientName','site','equipment','supervisor','technician','start','end','billing','frequency','currency','value'],employee:['name'],opening:['materialCode','warehouseCode','quantity','cost']};
 function masterImportForm(){
   let sheets=[],entries=[];
-  const label={client:'Clients',supplier:'Suppliers',material:'Materials',project:'Projects',contract:'Maintenance contracts',employee:'Employee access',opening:'Opening stock'};
+  const types=Object.entries(masterImports).filter(([type])=>isPlatform()?type==='employee':
+    type!=='employee'||(!state.data.demoRoles.length&&!isPrivate())).map(([type,{label}])=>[type,label]);
   editOperation('master.import',{title:'Import records',sub:'Map columns, preview the rows, and confirm the batch.',wide:true,
-    fields:[select('type','Record type',Object.entries(label).filter(([k])=>isPlatform()?k==='employee':k!=='employee'||(!state.data.demoRoles.length&&!isPrivate())),isPlatform()?'employee':'client'),
+    fields:[select('type','Record type',types,isPlatform()?'employee':'client'),
       input('file','Spreadsheet','',{type:'file',accept:'.csv,.tsv,.xlsx'}),date('cutoff','Verified opening stock cutoff',today(),optional)],
-    content:'<div id="master-import" style="margin-top:12px"></div>',submit:'Confirm import',
+    content:'<div class="import-template"><button type="button" class="btn" id="master-template">'+icon('download',16)+'Download Excel template</button>'+
+      '<p>Enter records on the Data tab. The Instructions tab has examples, required columns, and formats.</p></div>'+
+      '<div id="master-import"></div>',submit:'Confirm import',
     notes:isPlatform()?'Import up to 100 users at a time. Store employee IDs as text. Imported users start with sign-in disabled.':'Use YYYY-MM-DD dates and plain numeric values. Import up to 100 rows per batch.',
     transform:values=>{
       if(!entries.length)throw Error('Map every required field and review valid rows.');
-      if(entries.length>100)throw Error('Split the source into files of up to 100 data rows.');
-      return {type:values.type,source:values.file.name,cutoff:values.cutoff,entries};
+      return {type:values.type,source:values.file.name,...(values.type==='opening'?{cutoff:values.cutoff}:{}),entries};
     },
     afterOpen:form=>{
       const host=$('#master-import');
-      const canon=value=>String(value).toLowerCase().replace(/[^a-z0-9]/g,'');
+      const {type:typePicker,file:filePicker,cutoff}=form.elements;
+      $('#master-template',form).addEventListener('click',()=>{
+        const type=typePicker.value;
+        const workbook=masterImportTemplate(type,employeeRoleChoices(state.data.actor));
+        const filename='TEAMS_'+masterImports[type].label.replace(/[^A-Za-z0-9]+/g,'_')+'_Import_Template.xlsx';
+        downloadBlob(new Blob([workbook],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),filename);
+      });
       const renderMapping=()=>{
-        if(!sheets.length)return;
-        const type=form.elements.type.value,fields=Object.entries(masterFields[type]),required=masterRequired[type];
-        host.innerHTML='<label class="field">Worksheet <select id="master-sheet">'+sheets.map((s,i)=>'<option value="'+i+'">'+e(s.name)+'</option>').join('')+'</select></label><div id="master-map" class="form-grid" style="margin-top:10px"></div><div id="master-preview" style="margin-top:10px"></div>';
-        const sheetPicker=$('#master-sheet'),mapping=$('#master-map'),preview=$('#master-preview');
+        const type=typePicker.value,{columns}=masterImports[type];
+        cutoff.closest('label').hidden=type!=='opening';
+        cutoff.required=type==='opening';
+        if(!sheets.length){host.innerHTML='';return;}
+        const required=columns.filter(column=>column.required),labels=Object.fromEntries(columns.map(column=>[column.key,column.label]));
+        host.innerHTML='<div class="form-grid"><label class="field">Worksheet <select id="master-sheet">'+sheets.map((sheet,index)=>
+          '<option value="'+index+'">'+e(sheet.name)+'</option>').join('')+'</select></label>'+
+          '<label class="field">Header row <select id="master-header"></select></label></div>'+
+          '<div id="master-map" class="form-grid"></div><div id="master-preview" aria-live="polite"></div>';
+        const sheetPicker=$('#master-sheet'),headerPicker=$('#master-header'),mapping=$('#master-map'),preview=$('#master-preview');
+        const selectedRows=()=>sheets[Number(sheetPicker.value)].rows;
         const display=()=>{
-          const sheet=sheets[Number(sheetPicker.value)],map=Object.fromEntries($$('select',mapping).filter(s=>s.value!=='').map(s=>[s.dataset.master,Number(s.value)]));
-          const missing=required.filter(k=>map[k]==null);
-          const values=sheet.rows.slice(1).filter(row=>row.some(x=>String(x??'').trim())).map(row=>Object.fromEntries(Object.entries(map).map(([key,i])=>[key,String(row[i]??'').trim()])));
-          const blanks=values.flatMap((row,i)=>required.some(k=>!row[k])?[i+2]:[]);
+          const header=Number(headerPicker.value);
+          const map=Object.fromEntries($$('select',mapping).filter(select=>select.value!=='').map(select=>[select.dataset.master,Number(select.value)]));
+          const missing=required.filter(({key})=>map[key]==null);
+          const rows=selectedRows().slice(header+1).map((row,index)=>({row,number:index+header+2})).filter(({row})=>row.some(value=>String(value??'').trim()));
+          const values=rows.map(({row})=>Object.fromEntries(
+            Object.entries(map).map(([key,index])=>[key,String(row[index]??'').trim()]).filter(([,value])=>value!==''),
+          ));
+          const blanks=values.flatMap((row,index)=>required.some(({key})=>!row[key])||(type==='contract'&&row.serviceType!=='troubleshooting'&&!row.frequency)?[rows[index].number]:[]);
           const duplicates=[],seen=new Set();
           for(const [i,row] of values.entries()){
             const signature=type==='opening'?row.materialCode+'|'+row.warehouseCode:type==='employee'?row.employeeId||row.email||row.name:row.code||row.email||row.name;
-            if(signature){const key=signature.toLowerCase();if(seen.has(key))duplicates.push(i+2);seen.add(key);}
+            if(signature){const key=signature.toLowerCase();if(seen.has(key))duplicates.push(rows[i].number);seen.add(key);}
           }
-          entries=missing.length||blanks.length||duplicates.length?[]:values;
-          const columns=Object.keys(map).slice(0,8);
-          preview.innerHTML='<p class="form-note">'+e(missing.length?'Map required fields: '+missing.map(k=>masterFields[type][k]).join(', '):blanks.length?'Required values are missing in rows '+blanks.slice(0,12).join(', ')+'.':duplicates.length?'Possible duplicate records in rows '+duplicates.slice(0,12).join(', ')+'.':values.length+' rows ready for server validation.')+'</p>'+
-            (columns.length?table(columns.map(k=>masterFields[type][k]),values.slice(0,6),row=>columns.map(k=>e(row[k]))):'');
+          const issue=missing.length?'Map required fields: '+missing.map(({label})=>label).join(', '):
+            new Set(Object.values(map)).size<Object.keys(map).length?'Map each spreadsheet column to one field.':
+            blanks.length?'Required values are missing in rows '+blanks.slice(0,12).join(', ')+'.':
+            duplicates.length?'Possible duplicate records in rows '+duplicates.slice(0,12).join(', ')+'.':
+            values.length>100?'Split the source into files of up to 100 data rows.':
+            !values.length?'Enter data below the header row and upload the file again.':'';
+          entries=issue?[]:values;
+          const previewKeys=Object.keys(map).slice(0,8);
+          preview.innerHTML='<p class="form-note">'+e(issue||values.length+' rows ready for server validation.')+'</p>'+
+            (previewKeys.length&&values.length?table(previewKeys.map(key=>labels[key]),values.slice(0,6),row=>previewKeys.map(key=>e(row[key]))):'');
         };
-        const selectSheet=()=>{
-          const header=sheets[Number(sheetPicker.value)].rows[0]??[];
-          mapping.innerHTML=fields.map(([key,label])=>{
-            const guess=header.findIndex(x=>[canon(key),canon(label)].includes(canon(x)));
-            return '<label class="field">'+e(label)+(required.includes(key)?' *':'')+'<select data-master="'+key+'"><option value="">Skip</option>'+header.slice(0,100).map((title,i)=>'<option value="'+i+'" '+(guess===i?'selected':'')+'>'+e(title||'Column '+(i+1))+'</option>').join('')+'</select></label>';
-          }).join('');
+        const selectHeader=()=>{
+          const header=selectedRows()[Number(headerPicker.value)]??[],guesses=mapMasterHeaders(type,header);
+          mapping.innerHTML=columns.map(({key,label,required})=>'<label class="field">'+e(label)+(required?' *':'')+
+            '<select data-master="'+key+'"><option value="">Skip</option>'+header.slice(0,100).map((title,index)=>
+              '<option value="'+index+'" '+(guesses[key]===index?'selected':'')+'>'+e(title||'Column '+(index+1))+'</option>').join('')+'</select></label>').join('');
           display();
         };
+        const selectSheet=()=>{
+          const rows=selectedRows(),suggested=guessMasterHeader(type,rows);
+          headerPicker.innerHTML=rows.slice(0,100).map((row,index)=>'<option value="'+index+'"'+(suggested===index?' selected':'')+'>'+
+            e('Row '+(index+1)+(row.some(Boolean)?' / '+row.filter(Boolean).slice(0,3).join(' / ').slice(0,100):''))+'</option>').join('');
+          selectHeader();
+        };
         sheetPicker.addEventListener('change',selectSheet);
+        headerPicker.addEventListener('change',selectHeader);
         mapping.addEventListener('change',display);
         selectSheet();
       };
-      form.elements.type.addEventListener('change',renderMapping);
-      form.elements.file.addEventListener('change',async event=>{
-        entries=[];sheets=[];const file=event.target.files[0];if(!file)return;
+      typePicker.addEventListener('change',renderMapping);
+      filePicker.addEventListener('change',async()=>{
+        entries=[];sheets=[];
+        const file=filePicker.files[0];
+        if(!file){host.innerHTML='';return;}
         host.innerHTML='<p class="form-note">Reading spreadsheet...</p>';
-        try{sheets=await readBoq(file);renderMapping();}
-        catch(error){host.innerHTML='<p class="form-error">'+e(error.message)+'</p>';}
+        try{
+          const parsed=await readBoq(file);
+          if(filePicker.files[0]===file){sheets=parsed;renderMapping();}
+        }catch(error){if(filePicker.files[0]===file)host.innerHTML='<p class="form-error">'+e(error.message)+'</p>';}
       });
+      renderMapping();
     },
   });
 }
-function documentForm(id){
-  const parent=rec(id),key=crypto.randomUUID(),records=data().filter(x=>['client','project','tender','quote','request','requisition','po','contract','agreement','mail','job','claim','invoice'].includes(x.kind)).map(x=>[x.id,(kindLabels[x.kind]||x.kind)+' / '+rawName(x)]);
-  formModal({title:'Attach document',sub:parent?.code||'',fields:[select('parentId','Link to record',records,id||''),input('file','Select file','',{type:'file',full:true,accept:'.pdf,.xlsx,.docx,.png,.jpg,.jpeg,.webp,.csv,.txt,.zip,.dwg'})],notes:state.data.publicDemo?'Maximum 10 MB per file. Attachments stay in this browser. Use fictional test files.':'Maximum 10 MB. Files inherit access from the linked record.',submit:'Upload file',onSubmit:async(_,form)=>{const body=new FormData(form);body.set('key',key);const result=await(await api('/api/upload',{method:'POST',body})).json();closeModal(true);await readState();render();if(parent)openRecord(parent.id);else openRecord(result.id);toast('Attachment saved.');}});
+function documentForm(id,inFolder=false){
+  const parent=rec(id),key=crypto.randomUUID();
+  if(inFolder&&parent?.kind!=='folder')return;
+  const options=data().filter(x=>['client','project','tender','quote','request','requisition','po','contract','agreement','mail','job','claim','invoice'].includes(x.kind))
+    .map(x=>[x.id,(kindLabels[x.kind]||x.kind)+' / '+rawName(x)]);
+  const fields=inFolder?[]:[select('parentId','Link to record',options,id||'')];
+  fields.push(input('file','Select file','',{type:'file',full:true}));
+  const notes=state.data.publicDemo?'Maximum 10 MB per file. Attachments stay in this browser. Use fictional test files.':
+    inFolder?'Maximum 10 MB per file. This folder is private to your account.':'Maximum 10 MB. Files inherit access from the linked record.';
+  formModal({title:inFolder?'Upload file':'Attach document',sub:inFolder?parent.name:parent?.code||'',fields,notes,submit:'Upload file',onSubmit:async(_,form)=>{
+    const body=new FormData(form);
+    if(inFolder)body.set('folderId',parent.id);
+    body.set('key',key);
+    const result=await(await api('/api/upload',{method:'POST',body})).json();
+    closeModal(true);await readState();render();
+    if(!inFolder)openRecord(parent?.id||result.id);
+    toast(inFolder?'File uploaded.':'Attachment saved.');
+  }});
 }
 function receivePicker(){
   const open=rows('po').filter(x=>['Ordered','Partially Received'].includes(x.status));
@@ -1648,12 +1720,16 @@ function profile(){
     '<div data-role-switcher><label class="field">Find a role or employee<input type="search" id="role-search" placeholder="Search roles or employee names" autocomplete="off"></label><p id="role-switch-error" class="form-error" role="alert" hidden></p><p id="role-switch-pending" class="form-note" role="status" hidden>Switching role...</p><div class="role-choice-grid">'+cards+'</div><p id="role-search-empty" class="empty" hidden>No matching roles or employees.</p></div>',button('Close','close'),true);
 
 }
+function downloadBlob(blob,filename){
+  const href=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=href;link.download=filename;document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(href),4000);
+}
 async function exportFile(path){
   try{
     const response=await api(path);
     const header=response.headers.get('Content-Disposition')||'',name=header.match(/filename\*=UTF-8''(.+)/i)?.[1];
-    const href=URL.createObjectURL(await response.blob()),link=document.createElement('a');
-    link.href=href;link.download=name?decodeURIComponent(name):'teams-export';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(href),4000);
+    downloadBlob(await response.blob(),name?decodeURIComponent(name):'teams-export');
   }catch(error){toast(error.message,true);}
 }
 async function audit(){
@@ -1751,6 +1827,7 @@ document.addEventListener('click',event=>{
   }
   const [cmd,id,arg,extra]=control.dataset.cmd.split('|');
   switch(cmd){
+    case 'folder.open':openDocumentFolder(id);break;
     case 'close':closeModal();break;
     case 'mobile':state.mobile=!state.mobile;sidebar();if(state.mobile)$('#sidebar .nav button')?.focus();break;
     case 'mobile.close':state.mobile=false;sidebar();break;
@@ -1878,7 +1955,7 @@ function composeMailbox({relatedId='',draftId='',replyId='',replyAll=false,forwa
   const draft=rec(draftId),reply=rec(replyId),forward=rec(forwardId),related=rec(relatedId||draft?.relatedId||reply?.relatedId||forward?.relatedId),clientRecord=rec(related?.kind==='client'?related.id:related?.clientId),sender=reply?.from?.match(/<([^>]+)>/)?.[1]||reply?.from||'';
   let attachments=structuredClone(draft?.attachments||(forward?(forward.attachments||[]).map((a,index)=>({type:'message',id:forward.id,index,name:a.name,size:a.size})):[])),savedId=draft?.id||'',sendKey=crypto.randomUUID();
   if(related&&['quote','agreement','invoice'].includes(related.kind)&&clientDocumentReady(related)&&!draft&&!reply&&!forward)attachments.push({type:'export',id:related.id,kind:related.kind,revision:related.revision,format:['agreement','invoice'].includes(related.kind)?'pdf':format,name:related.code+(related.revision?'-R'+related.revision:'')+'.'+(['agreement','invoice'].includes(related.kind)?'pdf':format)});
-  const exports=mailExportOptions(),docs=rows('document');
+  const exports=mailExportOptions(),docs=rows('document').filter(row=>row.parentKind!=='folder');
   const to=draft?.to|| (reply?reply.direction==='outgoing'?reply.to:[sender]:[]),cc=draft?.cc||(replyAll?[...new Set([...(reply.cc||[]),...(reply.to||[])])].filter(x=>!(state.data.emailConnection?.addresses?.[reply.mailbox]||[]).includes(x)&&x!==sender):[]);
   const subject=draft?.subject||(reply?'Re: '+reply.subject:forward?'Fwd: '+forward.subject:related?(related.code?related.code+' - ':'')+related.name:'');
   const body=draft?.bodyHtml||e(draft?.body|| (forward?'Forwarded message\nFrom: '+(forward.from||'TEAMS')+'\nSubject: '+forward.subject+'\n\n'+forward.body:reply?'Dear Client,\n\n\n\nRegards,\nTEAMS':related?'Dear Client,\n\nPlease find the '+(related.kind==='quote'?'quotation':'project documents')+' attached for your review.\n\nRegards,\nTEAMS':'' )).replace(/\n/g,'<br>');
